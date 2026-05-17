@@ -1,0 +1,151 @@
+#pragma once
+#include <Arduino.h>
+#include <Udp.h>
+
+// ---------- tuneable limits ----------
+// All values can be overridden by defining them before including this header.
+#ifndef TRXNET_MAX_PEERS
+#define TRXNET_MAX_PEERS         8
+#endif
+#ifndef TRXNET_MAX_SUBS
+#define TRXNET_MAX_SUBS          16
+#endif
+#ifndef TRXNET_MAX_DEVICE_NAME
+#define TRXNET_MAX_DEVICE_NAME   32   // including null terminator
+#endif
+#ifndef TRXNET_MAX_TOPIC_LEN
+#define TRXNET_MAX_TOPIC_LEN     32   // including null terminator
+#endif
+#ifndef TRXNET_MAX_PAYLOAD
+#define TRXNET_MAX_PAYLOAD       64
+#endif
+// Shared pending queue for all outgoing CON messages.
+// One publish(..., TRX_CON) to N peers consumes N slots.
+// Must be >= TRXNET_MAX_PEERS to guarantee delivery to all peers.
+#ifndef TRXNET_MAX_PENDING
+#define TRXNET_MAX_PENDING       8
+#endif
+// Dedup ring buffer for incoming CON messages.
+// Must hold enough entries to cover the full retransmit window:
+// TRXNET_CON_MAX_RETRIES retransmits × number of simultaneous senders.
+// Default 16 covers 5 peers each with up to 3 retransmits with margin.
+#ifndef TRXNET_MAX_SEEN
+#define TRXNET_MAX_SEEN          16
+#endif
+
+// ---------- timing (ms) ----------
+#ifndef TRXNET_ANNOUNCE_MS
+#define TRXNET_ANNOUNCE_MS       30000UL
+#endif
+#ifndef TRXNET_PEER_TIMEOUT_MS
+#define TRXNET_PEER_TIMEOUT_MS   95000UL   // ~3 missed announces → peer removed
+#endif
+#ifndef TRXNET_CON_TIMEOUT_MS
+#define TRXNET_CON_TIMEOUT_MS    2000UL
+#endif
+#ifndef TRXNET_CON_MAX_RETRIES
+#define TRXNET_CON_MAX_RETRIES   3
+#endif
+
+// ---------- packet buffer ----------
+// CoAP header(4) + options(TOPIC+8 overhead) + payload marker(1) + payload
+#define TRXNET_PKT_MAX  (4 + TRXNET_MAX_TOPIC_LEN + 8 + 1 + TRXNET_MAX_PAYLOAD)
+
+// ---------- public types ----------
+enum TrxMsgType { TRX_NON = 0, TRX_CON = 1 };
+
+struct TrxPeer {
+    char      name[TRXNET_MAX_DEVICE_NAME];
+    IPAddress ip;
+    uint16_t  port;
+    uint32_t  lastSeen;
+    bool      active;
+};
+
+typedef void (*TrxNetCallback)(const char* from, const uint8_t* data, size_t len);
+
+// ---------- class ----------
+class TrxNet {
+public:
+    // udp  : WiFiUDP or EthernetUDP instance (caller manages WiFi/Ethernet init)
+    // port : UDP port for both discovery and CoAP. All devices must use the same port. Default: 5683.
+    TrxNet(UDP& udp, uint16_t port = 5683);
+
+    // Call once after network is up.
+    // name : device identity string assembled at runtime, e.g. "transceiver.01". Max 31 chars.
+    void begin(const char* name);
+
+    // Call from loop() — processes incoming packets, keepalive, CON retransmit
+    void loop();
+
+    // Register a callback for an incoming topic path, e.g. "/freq"
+    // Registering the same path twice replaces the callback.
+    void subscribe(const char* path, TrxNetCallback cb);
+
+    // Remove subscription
+    void unsubscribe(const char* path);
+
+    // Send payload to all known peers on the given path.
+    // TRX_NON: fire-and-forget. TRX_CON: retransmits until ACKed (per peer).
+    void publish(const char* path, const uint8_t* data, size_t len,
+                 TrxMsgType type = TRX_NON);
+
+    // Number of currently active peers
+    int peerCount() const;
+
+    // Read-only access to peer by index (0..peerCount()-1). Returns NULL if out of range.
+    const TrxPeer* peer(int index) const;
+
+private:
+    struct Sub {
+        char           path[TRXNET_MAX_TOPIC_LEN];
+        TrxNetCallback cb;
+        bool           active;
+    };
+
+    struct Pending {
+        uint8_t   buf[TRXNET_PKT_MAX];
+        size_t    len;
+        IPAddress ip;
+        uint16_t  port;
+        uint16_t  msgId;
+        uint32_t  sentAt;
+        uint8_t   retries;
+        bool      active;
+    };
+
+    // Ring buffer for CON deduplication — tracks recently received (ip, msgId) pairs.
+    // Prevents duplicate callback dispatch when a retransmitted CON arrives after
+    // the ACK was lost in transit.
+    struct SeenMsg {
+        IPAddress ip;
+        uint16_t  msgId;
+    };
+
+    UDP&      _udp;
+    char      _name[TRXNET_MAX_DEVICE_NAME];
+    uint16_t  _port;
+    uint32_t  _lastAnnounce;
+    uint16_t  _msgId;
+
+    TrxPeer  _peers[TRXNET_MAX_PEERS];
+    Sub      _subs[TRXNET_MAX_SUBS];
+    Pending  _pending[TRXNET_MAX_PENDING];
+    SeenMsg  _seen[TRXNET_MAX_SEEN];
+    uint8_t  _seenIdx;
+
+    void      _sendDiscovery(uint8_t pktType, IPAddress dest);
+    void      _handleIncoming();
+    void      _processDiscovery(IPAddress src, const uint8_t* buf, size_t len);
+    void      _processCoAP(IPAddress src, uint16_t srcPort,
+                            const uint8_t* buf, size_t len);
+    size_t    _buildCoAP(uint8_t* buf, const char* path,
+                          const uint8_t* data, size_t dataLen,
+                          TrxMsgType type, uint16_t msgId);
+    void      _sendRaw(IPAddress ip, uint16_t port,
+                        const uint8_t* buf, size_t len);
+    void      _sendACK(IPAddress ip, uint16_t port, uint16_t msgId);
+    void      _checkTimeouts();
+    TrxPeer*  _findOrAddPeer(const char* name, IPAddress ip, uint16_t port);
+    uint16_t  _nextMsgId();
+};
