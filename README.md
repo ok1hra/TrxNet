@@ -25,7 +25,8 @@ Arduino IDE will find it automatically on next restart.
 
 ```cpp
 // Type and ID are separate so each can come from EEPROM / config menu.
-char deviceType[16] = "transceiver";
+// NET_ID 0x00 is reserved as "disabled" sentinel — do not use as a real device ID.
+char deviceType[16] = "705";        // device type prefix, e.g. "OI3", "705", "ROT"
 char deviceId[8]    = "01";
 char deviceName[TRXNET_MAX_DEVICE_NAME];  // assembled in setup()
 
@@ -78,7 +79,7 @@ Call once, **after** WiFi/Ethernet is connected and the device name is known.
 
 | Parameter | Description |
 |-----------|-------------|
-| `name`    | Device identity string assembled at runtime, e.g. `"transceiver.01"`. Max 31 chars. Two devices with the same name are treated as one. Typically built as `snprintf(buf, sizeof(buf), "%s.%s", deviceType, deviceId)`. |
+| `name`    | Device identity string assembled at runtime, e.g. `"705.01"` or `"OI3.ff"`. Max 31 chars. Two devices with the same name are treated as one. Typically built as `snprintf(buf, sizeof(buf), "%s.%02x", deviceType, netId)`. **NET_ID `0x00` is reserved as "disabled" — do not call `begin()` when NET_ID is 0.** |
 
 ---
 
@@ -162,6 +163,45 @@ struct TrxPeer {
     bool      active;
 };
 ```
+
+---
+
+## Conventions
+
+### NET_ID `0x00` — disabled sentinel
+
+`NET_ID = 0x00` is reserved across all TrxNet devices as a "disabled" sentinel.
+A device configured with `NET_ID = 0x00` must **not** call `begin()` and must not
+participate in the network. This lets firmware disable TrxNet via a single config
+byte without a separate enable flag.
+
+```cpp
+uint8_t NET_ID = EEPROM.read(NET_ID_ADDR);
+if (NET_ID != 0x00) {
+    snprintf(deviceName, sizeof(deviceName), "705.%02x", NET_ID);
+    net.begin(deviceName);
+}
+```
+
+### Mode byte — ICOM CI-V standard
+
+The `/mode` topic carries an **ICOM CI-V mode byte** (`uint8_t`). Using CI-V bytes
+as the shared format means devices with direct CI-V access (e.g. IC-705 Interface)
+can pass the byte through without conversion. Devices without CI-V (e.g. OI3 keyer)
+map their internal mode to the nearest CI-V equivalent.
+
+| CI-V byte | Mode |
+|-----------|------|
+| `0x00` | LSB |
+| `0x01` | USB |
+| `0x02` | AM |
+| `0x03` | CW |
+| `0x04` | RTTY / FSK |
+| `0x05` | FM |
+| `0x06` | WFM |
+| `0x07` | CW-R |
+| `0x08` | RTTY-R |
+| `0x17` | DV (D-STAR) |
 
 ---
 
