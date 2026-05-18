@@ -5,10 +5,10 @@
 // ---------- tuneable limits ----------
 // All values can be overridden by defining them before including this header.
 #ifndef TRXNET_MAX_PEERS
-#define TRXNET_MAX_PEERS         8
+#define TRXNET_MAX_PEERS         6
 #endif
 #ifndef TRXNET_MAX_SUBS
-#define TRXNET_MAX_SUBS          16
+#define TRXNET_MAX_SUBS          8
 #endif
 #ifndef TRXNET_MAX_DEVICE_NAME
 #define TRXNET_MAX_DEVICE_NAME   32   // including null terminator
@@ -23,7 +23,7 @@
 // One publish(..., TRX_CON) to N peers consumes N slots.
 // Must be >= TRXNET_MAX_PEERS to guarantee delivery to all peers.
 #ifndef TRXNET_MAX_PENDING
-#define TRXNET_MAX_PENDING       8
+#define TRXNET_MAX_PENDING       2
 #endif
 // Dedup ring buffer for incoming CON messages.
 // Must hold enough entries to cover the full retransmit window:
