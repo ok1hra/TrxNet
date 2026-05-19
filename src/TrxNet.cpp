@@ -111,6 +111,48 @@ void TrxNet::publish(const char* path, const uint8_t* data, size_t len,
     }
 }
 
+bool TrxNet::publishTo(const char* peerName, const char* path,
+                       const uint8_t* data, size_t len,
+                       TrxMsgType type)
+{
+    if (!peerName || !path) return false;
+    if (strlen(peerName) >= TRXNET_MAX_DEVICE_NAME) return false;
+    if (strlen(path) >= TRXNET_MAX_TOPIC_LEN) return false;
+
+    TrxPeer* peer = NULL;
+    for (int i = 0; i < TRXNET_MAX_PEERS; i++) {
+        if (_peers[i].active && strcmp(_peers[i].name, peerName) == 0) {
+            peer = &_peers[i];
+            break;
+        }
+    }
+    if (!peer) return false;
+
+    uint16_t id = _nextMsgId();
+
+    if (type == TRX_CON) {
+        for (int j = 0; j < TRXNET_MAX_PENDING; j++) {
+            if (_pending[j].active) continue;
+            _pending[j].len     = _buildCoAP(_pending[j].buf, path,
+                                              data, len, type, id);
+            _pending[j].ip      = peer->ip;
+            _pending[j].port    = peer->port;
+            _pending[j].msgId   = id;
+            _pending[j].sentAt  = millis();
+            _pending[j].retries = 0;
+            _pending[j].active  = true;
+            _sendRaw(peer->ip, peer->port, _pending[j].buf, _pending[j].len);
+            return true;
+        }
+        return false;
+    }
+
+    uint8_t buf[TRXNET_PKT_MAX];
+    size_t  pktLen = _buildCoAP(buf, path, data, len, type, id);
+    _sendRaw(peer->ip, peer->port, buf, pktLen);
+    return true;
+}
+
 void TrxNet::setPort(uint16_t port) {
     _port = port;
 }

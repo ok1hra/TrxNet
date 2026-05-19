@@ -90,6 +90,13 @@ public:
     void publish(const char* path, const uint8_t* data, size_t len,
                  TrxMsgType type = TRX_NON);
 
+    // Send payload to one known peer by device name.
+    // Returns false when peerName/path is invalid, the peer is not known, or the
+    // CON pending queue is full.
+    bool publishTo(const char* peerName, const char* path,
+                   const uint8_t* data, size_t len,
+                   TrxMsgType type = TRX_NON);
+
     // Number of currently active peers
     int peerCount() const;
 
