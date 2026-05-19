@@ -111,6 +111,10 @@ void TrxNet::publish(const char* path, const uint8_t* data, size_t len,
     }
 }
 
+void TrxNet::setPort(uint16_t port) {
+    _port = port;
+}
+
 int TrxNet::peerCount() const {
     int n = 0;
     for (int i = 0; i < TRXNET_MAX_PEERS; i++)

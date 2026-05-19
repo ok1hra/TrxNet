@@ -96,6 +96,9 @@ public:
     // Read-only access to peer by index (0..peerCount()-1). Returns NULL if out of range.
     const TrxPeer* peer(int index) const;
 
+    // Set UDP port — call before begin(). Allows runtime port configuration from EEPROM.
+    void setPort(uint16_t port);
+
 private:
     struct Sub {
         char           path[TRXNET_MAX_TOPIC_LEN];
