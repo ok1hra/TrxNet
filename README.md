@@ -331,3 +331,12 @@ All devices must pass the same `port` to the constructor. Devices on different p
 
 **8. Do not rely on message ordering.**  
 UDP does not guarantee order. Two `publish("/freq", ...)` calls may arrive in reverse order or the first may be lost entirely (TRX_NON). Design for the latest value winning.
+
+---
+
+## Monitor
+
+A passive UDP sniffer and real-time web dashboard for TrxNet networks.
+See [MONITOR.md](MONITOR.md) for full documentation.
+
+![TrxNet Monitor](MONITOR-small.png)

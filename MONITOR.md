@@ -3,6 +3,8 @@
 A passive UDP sniffer and real-time web dashboard for TrxNet networks.
 Runs on a developer laptop; opens automatically in the browser.
 
+![TrxNet Monitor](MONITOR-big.png)
+
 ---
 
 ## Requirements

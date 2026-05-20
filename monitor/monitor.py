@@ -402,7 +402,15 @@ class NetworkState:
         if pkt is None or pkt["name"] == self.name:
             return
 
-        device = self._get_or_create(pkt["name"], src_ip, pkt["port"])
+        real_name = pkt["name"]
+        placeholder = f"?{src_ip}"
+        if real_name not in self.devices and placeholder in self.devices:
+            d = self.devices.pop(placeholder)
+            d.name = real_name
+            self.devices[real_name] = d
+            await self.broadcast({"type": "device_removed", "name": placeholder})
+
+        device = self._get_or_create(real_name, src_ip, pkt["port"])
         device.last_seen = now
         device.last_announce = now
         self.last_discovery_ts = now
