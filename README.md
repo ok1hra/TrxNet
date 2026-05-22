@@ -183,6 +183,40 @@ if (NET_ID != 0x00) {
 }
 ```
 
+### Known device types
+
+| Type prefix | Example name | Description |
+|-------------|-------------|-------------|
+| `705` | `705.01` | IC-705 Interface — publishes `/freq`, `/mode`, `/flags`; subscribes `/s-hz`, `/s-mode` |
+| `OI3` | `OI3.ff` | k3ng CW keyer — publishes `/cw`; subscribes `/s-cw` |
+| `ROT` | `ROT.01` | IP-rotator — publishes `/azimuth`, `/elevation`; subscribes `/s-azimuth`, `/s-elevation` |
+
+Device type prefixes are arbitrary strings — the library does not interpret them. The table above documents the convention used across the remoteQTH device family.
+
+---
+
+### Rotator azimuth and elevation — `uint16_t` LE
+
+The `/azimuth` and `/elevation` topics carry a **raw `uint16_t`, 2 bytes, little-endian** value in degrees.
+
+```cpp
+// Publish current azimuth (180°)
+uint16_t az = 180;
+net.publish("/azimuth", (const uint8_t*)&az, sizeof(az), TRX_NON);
+
+// Receive azimuth on another device
+void onAzimuth(const char* from, const uint8_t* data, size_t len) {
+    if (len < sizeof(uint16_t)) return;
+    uint16_t az;
+    memcpy(&az, data, sizeof(az));
+}
+net.subscribe("/azimuth", onAzimuth);
+```
+
+`/s-azimuth` and `/s-elevation` follow the same encoding and are used to command a rotation target from a peer device.
+
+---
+
 ### Mode byte — ICOM CI-V standard
 
 The `/mode` topic carries an **ICOM CI-V mode byte** (`uint8_t`). Using CI-V bytes

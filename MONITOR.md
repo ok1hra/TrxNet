@@ -124,7 +124,21 @@ Press `[INJECT]` on any device row to open the inject form.
 | `/mode` | `uint8` CI-V code | `USB` |
 | `/flags` | `uint16 LE` CI-V bitmask | `PTT \| SPLIT` |
 | `/cw` | ASCII string | `"CQ CQ DE OK1HRA"` |
+| `/azimuth`, `/elevation`, `/s-azimuth`, `/s-elevation` | `uint16 LE` degrees | `180°` |
 | other | raw bytes | `0x 03 A1 FF` |
+
+---
+
+## Version check
+
+On startup the monitor fetches `library.properties` from the `main` branch on GitHub
+and compares the `version` field to the version of the running code.
+
+If a newer version is available, a **red banner** appears at the top of the left panel
+showing the new version, the currently running version, and a link to the repository.
+
+The check runs once at startup. If GitHub is unreachable the check is silently ignored —
+no warning is shown and the monitor continues normally.
 
 ---
 

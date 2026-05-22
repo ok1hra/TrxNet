@@ -118,6 +118,20 @@ html, body {
   padding: 2px 6px; width: 90px;
 }
 
+/* ── update banner ── */
+#update-banner {
+  display: none;
+  background: var(--red);
+  color: #fff;
+  font-size: 12px;
+  padding: 8px 6px;
+  text-align: center;
+  line-height: 1.6;
+  border-bottom: 2px solid #ff8080;
+}
+#update-banner.visible { display: block; }
+#update-banner a { color: #fff; text-decoration: underline; }
+
 /* ── export button ── */
 #export-btn {
   background: var(--hl); border: 1px solid var(--border);
@@ -286,6 +300,12 @@ html, body {
 
   <!-- LEFT PANEL -->
   <div id="left">
+    <div id="update-banner">
+      &#x26A0; NEW VERSION<br>
+      <strong id="upd-latest"></strong><br>
+      <span style="font-size:11px;opacity:.85;">running <span id="upd-local"></span></span><br>
+      <a href="https://github.com/ok1hra/TrxNet" target="_blank">github.com/ok1hra/TrxNet</a>
+    </div>
     <div id="left-inner">
 
       <div class="box">
@@ -433,6 +453,7 @@ function handleMsg(msg) {
       S.join_active = msg.join_active;
       S.monitor_name = msg.monitor_name;
       S.port        = msg.port;
+      if (msg.update_available) showUpdateBanner(msg.local_version, msg.latest_version);
       renderAll();
       initPacketLog(msg.packets || []);
       break;
@@ -476,7 +497,17 @@ function handleMsg(msg) {
     case "export_data":
       downloadJSON(msg.data);
       break;
+
+    case "version_check":
+      if (msg.update_available) showUpdateBanner(msg.local, msg.latest);
+      break;
   }
+}
+
+function showUpdateBanner(local, latest) {
+  el("upd-local").textContent  = local;
+  el("upd-latest").textContent = latest;
+  el("update-banner").classList.add("visible");
 }
 
 // ── render ─────────────────────────────────────────────────────────────────

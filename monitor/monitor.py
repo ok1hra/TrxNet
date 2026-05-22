@@ -8,9 +8,11 @@ import dataclasses
 import json
 import os
 import random
+import re
 import socket
 import struct
 import time
+import urllib.request
 import webbrowser
 from http import HTTPStatus
 from pathlib import Path
@@ -23,6 +25,47 @@ try:
     from websockets.http11 import Response as WsResponse
 except ImportError:
     raise SystemExit("Missing dependency: pip install 'websockets>=12'")
+
+# ── version check ────────────────────────────────────────────────────────────
+
+def read_local_version() -> str:
+    props = Path(__file__).parent.parent / "library.properties"
+    try:
+        m = re.search(r'^version\s*=\s*(.+)$', props.read_text(), re.MULTILINE)
+        if m:
+            return m.group(1).strip()
+    except Exception:
+        pass
+    return "unknown"
+
+def parse_ver(s: str) -> tuple:
+    try:
+        return tuple(int(x) for x in s.strip().split('.'))
+    except Exception:
+        return (0, 0, 0)
+
+async def check_github_version(state: "NetworkState"):
+    url = "https://raw.githubusercontent.com/ok1hra/TrxNet/main/library.properties"
+    loop = asyncio.get_event_loop()
+    try:
+        content = await loop.run_in_executor(
+            None,
+            lambda: urllib.request.urlopen(url, timeout=10).read().decode()
+        )
+        m = re.search(r'^version\s*=\s*(.+)$', content, re.MULTILINE)
+        if m:
+            latest = m.group(1).strip()
+            if parse_ver(latest) > parse_ver(state.local_version):
+                state.update_available = True
+                state.latest_version = latest
+                await state.broadcast({
+                    "type": "version_check",
+                    "update_available": True,
+                    "local": state.local_version,
+                    "latest": latest,
+                })
+    except Exception:
+        pass
 
 # ── protocol constants ────────────────────────────────────────────────────────
 
@@ -85,6 +128,9 @@ def decode_payload(topic: str, data: bytes) -> str:
             return f"{hz / 1_000_000:.3f} MHz"
         if topic in ("/s-mode",):
             return CI_V_MODES.get(data[0], f"0x{data[0]:02X}")
+        if topic in ("/azimuth", "/elevation", "/s-azimuth", "/s-elevation"):
+            val = struct.unpack_from("<H", data)[0]
+            return f"{val}°"
     except Exception:
         pass
     return "0x " + " ".join(f"{b:02X}" for b in data)
@@ -299,6 +345,10 @@ class NetworkState:
         self.join_active = False
         self._msg_id     = random.randint(1, 0xFFFF)
 
+        self.local_version   = read_local_version()
+        self.update_available = False
+        self.latest_version  = ""
+
         self.devices: dict[str, Device]  = {}
         self.packet_ring: collections.deque = collections.deque(maxlen=PACKET_RING_SIZE)
         self.packet_times: collections.deque = collections.deque()
@@ -357,6 +407,9 @@ class NetworkState:
             "monitor_name": self.name,
             "join_active": self.join_active,
             "max_pending": self.max_pending,
+            "local_version": self.local_version,
+            "update_available": self.update_available,
+            "latest_version": self.latest_version,
             "stats": self._stats(),
             "devices": {n: device_to_dict(d) for n, d in self.devices.items()},
             "packets": list(self.packet_ring),
@@ -780,6 +833,8 @@ async def run(args):
 
     loop = asyncio.get_event_loop()
     await loop.create_datagram_endpoint(lambda: UDPProtocol(state), sock=sock)
+
+    asyncio.ensure_future(check_github_version(state))
 
     handler, process_request = make_http_handler(state)
 
