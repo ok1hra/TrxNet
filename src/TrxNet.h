@@ -2,6 +2,10 @@
 #include <Arduino.h>
 #include <Udp.h>
 
+// ---------- library version ----------
+// Bump on any API change. Apps may compile-check with #if TRXNET_VERSION >= ...
+#define TRXNET_VERSION 0x0102   // 1.02 — added onPeerAdded()
+
 // ---------- tuneable limits ----------
 // All values can be overridden by defining them before including this header.
 #ifndef TRXNET_MAX_PEERS
@@ -21,9 +25,19 @@
 #endif
 // Shared pending queue for all outgoing CON messages.
 // One publish(..., TRX_CON) to N peers consumes N slots.
-// Must be >= TRXNET_MAX_PEERS to guarantee delivery to all peers.
+// Each slot costs ~130 B on AVR (TRXNET_PKT_MAX + metadata).
+// Default 4 covers a per-peer state snapshot (2 topics) plus headroom for one
+// retry slot — assuming the publisher drains its greeting queue one peer per
+// loop() iteration, not all peers at once.
+//
+// NOTE on overrides: this #ifndef works only for header-only includes and
+// PlatformIO `build_flags`. The Arduino IDE compiles library .cpp files in a
+// separate translation unit that does NOT see #defines from the user's .ino —
+// overriding here from a sketch will silently break with C++ ODR violations
+// (class size mismatch between sketch and library). To change the value with
+// Arduino IDE, edit this header directly.
 #ifndef TRXNET_MAX_PENDING
-#define TRXNET_MAX_PENDING       2
+#define TRXNET_MAX_PENDING       4
 #endif
 // Dedup ring buffer for incoming CON messages.
 // Must hold enough entries to cover the full retransmit window:
@@ -63,6 +77,14 @@ struct TrxPeer {
 };
 
 typedef void (*TrxNetCallback)(const char* from, const uint8_t* data, size_t len);
+
+// Fired once when a new peer is discovered (first announce or first probe reply).
+// NOT fired for known peers that simply refresh their lastSeen via a repeat announce.
+// Fired again if the same peer is removed by timeout and later rejoins.
+// Called from net.loop() during UDP packet handling — keep the body short and
+// avoid calling publish/publishTo directly from here. Defer the work to the main
+// loop (e.g. set a flag, queue the peer name) to stay clear of UDP re-entrancy.
+typedef void (*TrxPeerCallback)(const TrxPeer* peer);
 
 // ---------- class ----------
 class TrxNet {
@@ -106,6 +128,11 @@ public:
     // Set UDP port — call before begin(). Allows runtime port configuration from EEPROM.
     void setPort(uint16_t port);
 
+    // Register a callback fired once per newly discovered peer. See TrxPeerCallback
+    // notes above. Passing NULL clears the callback. Only one slot — registering
+    // again replaces the previous callback.
+    void onPeerAdded(TrxPeerCallback cb);
+
 private:
     struct Sub {
         char           path[TRXNET_MAX_TOPIC_LEN];
@@ -143,6 +170,8 @@ private:
     Pending  _pending[TRXNET_MAX_PENDING];
     SeenMsg  _seen[TRXNET_MAX_SEEN];
     uint8_t  _seenIdx;
+
+    TrxPeerCallback _onPeerAdded;
 
     void      _sendDiscovery(uint8_t pktType, IPAddress dest);
     void      _handleIncoming();

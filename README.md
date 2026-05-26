@@ -174,6 +174,87 @@ struct TrxPeer {
 
 ---
 
+### `void onPeerAdded(TrxPeerCallback cb)`
+
+Register a callback fired **once per newly discovered peer** — useful for sending
+the current state snapshot to a peer that just joined (frequency, mode, etc.) so
+it does not have to wait for the next change. Passing `NULL` clears the callback.
+Only one slot — registering again replaces the previous callback.
+
+```cpp
+typedef void (*TrxPeerCallback)(const TrxPeer* peer);
+```
+
+The callback is **not** fired for known peers that simply refresh their `lastSeen`
+via a repeat announce. It fires again only if a peer was removed by
+`TRXNET_PEER_TIMEOUT_MS` and later rejoins.
+
+**Re-entrancy warning.** The callback runs from inside `net.loop()` during UDP
+packet handling. Calling `publish()` or `publishTo()` directly from the callback
+is technically possible on W5500 + Ethernet stacks, but is brittle and may break
+on other UDP backends. **Defer the actual send to the main loop.**
+
+#### Recommended pattern — "greet new peer with current state"
+
+```cpp
+// Pending list of peers waiting for the initial state snapshot.
+// Filled by onPeerAdded callback, drained by loop().
+char     pendingGreet[TRXNET_MAX_PEERS][TRXNET_MAX_DEVICE_NAME];
+uint8_t  pendingGreetCount = 0;
+
+void onPeerJoined(const TrxPeer* peer) {
+    if (pendingGreetCount >= TRXNET_MAX_PEERS) return;
+    strncpy(pendingGreet[pendingGreetCount], peer->name, TRXNET_MAX_DEVICE_NAME - 1);
+    pendingGreet[pendingGreetCount][TRXNET_MAX_DEVICE_NAME - 1] = '\0';
+    pendingGreetCount++;
+}
+
+// Send all topics this device publishes — keep in sync with regular publishes.
+void republishState(const char* peerName) {
+    uint32_t f = currentFreq;
+    uint8_t  m = currentMode;
+    net.publishTo(peerName, "/hz",   (uint8_t*)&f, sizeof(f), TRX_CON);
+    net.publishTo(peerName, "/mode", &m,            sizeof(m), TRX_CON);
+}
+
+void setup() {
+    // ... Ethernet.begin etc ...
+    net.onPeerAdded(onPeerJoined);
+    net.begin(deviceName);
+}
+
+void loop() {
+    net.loop();
+
+    // Drain ONE peer per iteration — keeps _pending bounded to one peer's
+    // worth of CON slots at a time. Draining all in a tight while-loop would
+    // queue N_peers × N_topics slots at once and require TRXNET_MAX_PENDING
+    // to scale with peer count. Per-iteration drain lets _pending stay at
+    // its default size regardless of how many peers join simultaneously.
+    if (pendingGreetCount > 0) {
+        pendingGreetCount--;
+        republishState(pendingGreet[pendingGreetCount]);
+    }
+}
+```
+
+Use `TRX_CON` for the snapshot to guarantee delivery — UDP drop at the moment
+of join would otherwise leave the new peer with stale state until the next
+change. The default `TRXNET_MAX_PENDING = 4` covers a single per-peer snapshot
+(2 topics) with retry headroom, assuming the per-iteration drain pattern shown
+above. If you publish more state topics per peer, raise `TRXNET_MAX_PENDING`
+accordingly (`N_topics + 2` for retry headroom).
+
+**To change buffer sizes with Arduino IDE, edit `TrxNet.h` directly.** The
+`#ifndef` override pattern does not work for sketch-level `#define` because
+Arduino IDE compiles library `.cpp` files in a separate translation unit that
+does not see the sketch's macros — the resulting class-size mismatch between
+sketch and library produces a silent C++ ODR violation (or, with stricter
+compilers, a build failure). PlatformIO `build_flags` are the only portable
+way to override these values from outside the library.
+
+---
+
 ## Conventions
 
 ### NET_ID `0x00` — disabled sentinel

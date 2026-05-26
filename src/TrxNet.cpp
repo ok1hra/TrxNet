@@ -21,7 +21,8 @@
 // Constructor
 // ========================================================================
 TrxNet::TrxNet(UDP& udp, uint16_t port)
-    : _udp(udp), _port(port), _lastAnnounce(0), _msgId(1), _seenIdx(0)
+    : _udp(udp), _port(port), _lastAnnounce(0), _msgId(1), _seenIdx(0),
+      _onPeerAdded(NULL)
 {
     _name[0] = '\0';
     memset(_peers,   0, sizeof(_peers));
@@ -155,6 +156,10 @@ bool TrxNet::publishTo(const char* peerName, const char* path,
 
 void TrxNet::setPort(uint16_t port) {
     _port = port;
+}
+
+void TrxNet::onPeerAdded(TrxPeerCallback cb) {
+    _onPeerAdded = cb;
 }
 
 int TrxNet::peerCount() const {
@@ -513,6 +518,7 @@ TrxPeer* TrxNet::_findOrAddPeer(const char* name, IPAddress ip, uint16_t port) {
             _peers[i].port     = port;
             _peers[i].lastSeen = millis();
             _peers[i].active   = true;
+            if (_onPeerAdded) _onPeerAdded(&_peers[i]);
             return &_peers[i];
         }
     }
