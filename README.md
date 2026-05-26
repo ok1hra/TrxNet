@@ -7,6 +7,14 @@ P2P telemetry and messaging for ham radio devices over a local network.
 - Supports **ESP32** (WiFiUDP) and **ATMEGA2560 + Ethernet shield** (EthernetUDP)
 - No dynamic memory allocation — safe for long-running embedded devices
 
+Currently used in these devices
+- [IP-rotator](https://github.com/ok1hra/IP-rotator)
+- [ESP32 QRPlog for IC-705](https://github.com/ok1hra/IC-705_Interface)
+- [TrxNet Monitor](https://github.com/ok1hra/TrxNet/blob/main/MONITOR.md)
+- [IP Antenna Matrix Controller up to 16x4](https://github.com/ok1hra/AntHub-NET)
+- [Open Interface III](https://github.com/ok1hra/oi3)
+- NodeRed
+
 ---
 
 ## Installation
