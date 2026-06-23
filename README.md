@@ -13,6 +13,7 @@ Currently used in these devices
 - [TrxNet Monitor](https://github.com/ok1hra/TrxNet/blob/main/MONITOR.md)
 - [IP Antenna Matrix Controller up to 16x4](https://github.com/ok1hra/AntHub-NET)
 - [Open Interface III](https://github.com/ok1hra/oi3)
+- [ESP32 DIN rail module (Config: TrxNetSwitch)](https://github.com/ok1hra/eth-din-dev-kit)
 - NodeRed
 
 ---
@@ -279,6 +280,7 @@ if (NET_ID != 0x00) {
 | `705` | `705.01` | IC-705 Interface — publishes `/freq`, `/mode`, `/flags`; subscribes `/s-hz`, `/s-mode` |
 | `OI3` | `OI3.ff` | k3ng CW keyer — publishes `/cw`; subscribes `/s-cw` |
 | `ROT` | `ROT.01` | IP-rotator — publishes `/azimuth`, `/elevation`; subscribes `/s-azimuth`, `/s-elevation` |
+| `DIN` | `DIN.01` | ETH DIN rail dev kit — subscribes `/s-gpio` (set 8 outputs); publishes `/gpio` (current output state) |
 
 Device type prefixes are arbitrary strings — the library does not interpret them. The table above documents the convention used across the remoteQTH device family.
 
@@ -325,6 +327,45 @@ map their internal mode to the nearest CI-V equivalent.
 | `0x07` | CW-R |
 | `0x08` | RTTY-R |
 | `0x17` | DV (D-STAR) |
+
+---
+
+### GPIO byte — 8-bit output map
+
+The `/s-gpio` and `/gpio` topics carry a single **`uint8_t`** whose 8 bits map to 8
+GPIO pins. `/s-gpio` commands the outputs; `/gpio` reports the current state back
+(same encoding). Bit `i` drives pin `map[i]`, bit 0 = LSB.
+
+Pin map used by the `DIN` (ETH DIN rail dev kit) device:
+
+| bit | GPIO |
+|-----|------|
+| 0   | 0    |
+| 1   | 2    |
+| 2   | 4    |
+| 3   | 12   |
+| 4   | 13   |
+| 5   | 14   |
+| 6   | 32   |
+| 7   | 33   |
+
+```cpp
+// Command outputs: turn on bit0 (GPIO0) and bit3 (GPIO12)
+uint8_t out = (1 << 0) | (1 << 3);
+net.publish("/s-gpio", &out, sizeof(out), TRX_NON);
+
+// Receive /s-gpio (or /gpio state report) on the device
+const int pinMap[8] = {0, 2, 4, 12, 13, 14, 32, 33};
+void onSGpio(const char* from, const uint8_t* data, size_t len) {
+    if (len < 1) return;
+    uint8_t b = data[0];
+    for (int i = 0; i < 8; i++) digitalWrite(pinMap[i], (b >> i) & 1);
+}
+net.subscribe("/s-gpio", onSGpio);
+```
+
+The device replies on `/gpio` with the applied byte on every change (`TRX_NON`)
+and sends a current-state snapshot to each newly joined peer (`TRX_CON`).
 
 ---
 
