@@ -14,6 +14,7 @@ Currently used in these devices
 - [IP Antenna Matrix Controller up to 16x4](https://github.com/ok1hra/AntHub-NET)
 - [Open Interface III](https://github.com/ok1hra/oi3)
 - [ESP32 DIN rail module (Config: TrxNetSwitch)](https://github.com/ok1hra/eth-din-dev-kit)
+- [3D print WX station](https://github.com/ok1hra/3D-print-WX-station)
 - NodeRed
 
 ---
