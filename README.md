@@ -281,6 +281,7 @@ if (NET_ID != 0x00) {
 | `OI3` | `OI3.ff` | k3ng CW keyer — publishes `/cw`; subscribes `/s-cw` |
 | `ROT` | `ROT.01` | IP-rotator — publishes `/azimuth`, `/elevation`; subscribes `/s-azimuth`, `/s-elevation` |
 | `DIN` | `DIN.01` | ETH DIN rail dev kit — subscribes `/s-gpio` (set 8 outputs); publishes `/gpio` (current output state) |
+| `WX` | `WX.01` | ESP32-POE weather station — publishes `/temp`, `/hum`, `/press`, `/rain`, `/winddir`, `/windavg`, `/windmax` (publish-only) |
 
 Device type prefixes are arbitrary strings — the library does not interpret them. The table above documents the convention used across the remoteQTH device family.
 
@@ -366,6 +367,31 @@ net.subscribe("/s-gpio", onSGpio);
 
 The device replies on `/gpio` with the applied byte on every change (`TRX_NON`)
 and sends a current-state snapshot to each newly joined peer (`TRX_CON`).
+
+---
+
+### WX weather station topics — scaled integers, LE
+
+The `WX` device publishes 7 telemetry topics as **raw little-endian scaled
+integers**. All are `uint16_t` except `/temp`, which is `int16_t` to allow
+sub-zero readings. Periodic publish (every 5 min) is `TRX_NON`; the snapshot
+sent to a newly joined peer via `onPeerAdded` is `TRX_CON`.
+
+| topic | type | unit × scale | example wire value |
+|-------|------|--------------|--------------------|
+| `/temp`    | `int16_t`  | °C × 100  | 21.35 °C → 2135 |
+| `/hum`     | `uint16_t` | % × 100   | 67.50 % → 6750 |
+| `/press`   | `uint16_t` | hPa × 10  | 1013.2 hPa → 10132 |
+| `/rain`    | `uint16_t` | mm × 100 (daily total) | 3.80 mm → 380 |
+| `/winddir` | `uint16_t` | ° (0–359) | 180° → 180 |
+| `/windavg` | `uint16_t` | m/s × 100 | 4.20 m/s → 420 |
+| `/windmax` | `uint16_t` | m/s × 100 | 9.80 m/s → 980 |
+
+```cpp
+// Publish temperature 21.35 °C
+int16_t t = (int16_t)lround(TemperatureCelsius * 100.0);
+net.publish("/temp", (const uint8_t*)&t, sizeof(t), TRX_NON);
+```
 
 ---
 

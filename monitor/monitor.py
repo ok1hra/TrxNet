@@ -131,6 +131,19 @@ def decode_payload(topic: str, data: bytes) -> str:
         if topic in ("/azimuth", "/elevation", "/s-azimuth", "/s-elevation"):
             val = struct.unpack_from("<H", data)[0]
             return f"{val}°"
+        # WX weather station (binary little-endian, scaled integers)
+        if topic == "/temp":
+            return f"{struct.unpack_from('<h', data)[0] / 100:.2f} °C"
+        if topic == "/hum":
+            return f"{struct.unpack_from('<H', data)[0] / 100:.2f} %"
+        if topic == "/press":
+            return f"{struct.unpack_from('<H', data)[0] / 10:.1f} hPa"
+        if topic == "/rain":
+            return f"{struct.unpack_from('<H', data)[0] / 100:.2f} mm"
+        if topic == "/winddir":
+            return f"{struct.unpack_from('<H', data)[0]}°"
+        if topic in ("/windavg", "/windmax"):
+            return f"{struct.unpack_from('<H', data)[0] / 100:.2f} m/s"
     except Exception:
         pass
     return "0x " + " ".join(f"{b:02X}" for b in data)

@@ -37,7 +37,7 @@
 // (class size mismatch between sketch and library). To change the value with
 // Arduino IDE, edit this header directly.
 #ifndef TRXNET_MAX_PENDING
-#define TRXNET_MAX_PENDING       4
+#define TRXNET_MAX_PENDING       9   // WX greet snapshot = 7 topics queued at once (one peer/loop) + retry headroom
 #endif
 // Dedup ring buffer for incoming CON messages.
 // Must hold enough entries to cover the full retransmit window:
