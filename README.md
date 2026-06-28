@@ -15,6 +15,7 @@ Currently used in these devices
 - [Open Interface III](https://github.com/ok1hra/oi3)
 - [ESP32 DIN rail module (Config: TrxNetSwitch)](https://github.com/ok1hra/eth-din-dev-kit)
 - [3D print WX station](https://github.com/ok1hra/3D-print-WX-station)
+- [ESP32 e-ink display](https://github.com/ok1hra/esp32-e-ink)
 - NodeRed
 
 ---
