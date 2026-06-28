@@ -4,7 +4,7 @@
 
 // ---------- library version ----------
 // Bump on any API change. Apps may compile-check with #if TRXNET_VERSION >= ...
-#define TRXNET_VERSION 0x0102   // 1.02 — added onPeerAdded()
+#define TRXNET_VERSION 0x0103   // 1.03 — onPeerAdded() also fires on PROBE from a known peer (reboot)
 
 // ---------- tuneable limits ----------
 // All values can be overridden by defining them before including this header.
@@ -81,6 +81,11 @@ typedef void (*TrxNetCallback)(const char* from, const uint8_t* data, size_t len
 // Fired once when a new peer is discovered (first announce or first probe reply).
 // NOT fired for known peers that simply refresh their lastSeen via a repeat announce.
 // Fired again if the same peer is removed by timeout and later rejoins.
+// ALSO fired (since 1.03) when a PROBE arrives from a peer that is already known:
+// a PROBE is sent only from begin(), so this means the peer rebooted while still
+// in our table (faster than the peer timeout). Use it to re-send a greeting
+// snapshot so the rebooted peer gets fresh state without waiting. Make the
+// handler idempotent — it may run for both brand-new and rebooted peers.
 // Called from net.loop() during UDP packet handling — keep the body short and
 // avoid calling publish/publishTo directly from here. Defer the work to the main
 // loop (e.g. set a flag, queue the peer name) to stay clear of UDP re-entrancy.

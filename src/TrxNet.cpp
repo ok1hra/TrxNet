@@ -227,10 +227,29 @@ void TrxNet::_processDiscovery(IPAddress src, const uint8_t* buf, size_t len) {
     if (strcmp(name, _name) == 0) return;
 
     uint16_t port = ((uint16_t)buf[4 + nameLen] << 8) | buf[4 + nameLen + 1];
-    _findOrAddPeer(name, src, port);
+
+    // A PROBE is sent only from begin() — i.e. the sender just (re)started. If we
+    // already know this peer, _findOrAddPeer() would merely refresh its lastSeen
+    // and NOT fire onPeerAdded, so a fast reboot (shorter than the peer timeout)
+    // would miss the greeting snapshot. Note whether the peer was already active
+    // so we can re-fire the callback for that reboot case below.
+    bool wasKnown = false;
+    if (buf[2] == DISC_PROBE) {
+        for (int i = 0; i < TRXNET_MAX_PEERS; i++) {
+            if (_peers[i].active && strcmp(_peers[i].name, name) == 0) {
+                wasKnown = true;
+                break;
+            }
+        }
+    }
+
+    TrxPeer* peer = _findOrAddPeer(name, src, port);
 
     if (buf[2] == DISC_PROBE) {
         _sendDiscovery(DISC_ANNOUNCE, src);
+        // Brand-new peers were already greeted inside _findOrAddPeer(); here we
+        // additionally re-greet a peer that rebooted while still in our table.
+        if (wasKnown && peer && _onPeerAdded) _onPeerAdded(peer);
     }
 }
 
