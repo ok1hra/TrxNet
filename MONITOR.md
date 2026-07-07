@@ -17,7 +17,7 @@ Runs on a developer laptop; opens automatically in the browser.
 ## Usage
 
 ```
-python monitor.py [--port PORT] [--http-port PORT] [--name NAME] [--max-pending N]
+python monitor.py [--port PORT] [--http-port PORT] [--name NAME] [--max-pending N] [--max-peers N]
 ```
 
 | Option | Default | Description |
@@ -26,6 +26,7 @@ python monitor.py [--port PORT] [--http-port PORT] [--name NAME] [--max-pending 
 | `--http-port` | `8080` | HTTP/WebSocket port for the browser UI |
 | `--name` | `MON.01` | Device name used when JOIN NETWORK is active |
 | `--max-pending` | `2` | `TRXNET_MAX_PENDING` value in firmware (used for overflow detection) |
+| `--max-peers` | `8` | Smallest node's `TRXNET_MAX_PEERS` — peer-table-full alert threshold. Since library v1.04 this is per-board: `8` = ATmega2560, `24` = ESP32. Set it to the value of the most RAM-constrained device on your network (for an all-ESP32 network use `24`). |
 
 The browser opens automatically at `http://localhost:8080`.
 
@@ -58,7 +59,7 @@ The monitor sends a PROBE broadcast and periodic ANNOUNCE every 30 s, joining th
 
 **What you see in active mode:** all published topics and payloads, retransmit counts, CON/ACK statistics for the monitor link.
 
-> **Peer table limit:** TrxNet supports a maximum of 6 peers per device. In a 5-device network, activating JOIN NETWORK fills the last slot. In a 6-device network, JOIN NETWORK is not possible without exceeding the limit. An alert fires when ≥ 6 devices are observed.
+> **Peer table limit:** each firmware device holds `TRXNET_MAX_PEERS` peers — since library v1.04 this is per-board (`8` on ATmega2560, `24` on ESP32; a full table can be protected with `setPriorityPrefixes()`). The monitor itself tracks every device it hears, but when JOIN NETWORK is active it occupies one peer slot in each device's table, so on a network at the smallest node's limit, joining can push that node over. The **peer-table-full** alert fires when the number of observed devices reaches `--max-peers` (default `8`); set that flag to your most RAM-constrained device's value.
 
 ---
 

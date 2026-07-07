@@ -350,10 +350,11 @@ def alert_to_dict(a: Alert) -> dict:
 # ── network state ─────────────────────────────────────────────────────────────
 
 class NetworkState:
-    def __init__(self, port: int, name: str, max_pending: int):
+    def __init__(self, port: int, name: str, max_pending: int, max_peers: int):
         self.port        = port
         self.name        = name
         self.max_pending = max_pending
+        self.max_peers   = max_peers
         self.start_time  = time.time()
         self.join_active = False
         self._msg_id     = random.randint(1, 0xFFFF)
@@ -420,6 +421,7 @@ class NetworkState:
             "monitor_name": self.name,
             "join_active": self.join_active,
             "max_pending": self.max_pending,
+            "max_peers": self.max_peers,
             "local_version": self.local_version,
             "update_available": self.update_available,
             "latest_version": self.latest_version,
@@ -597,10 +599,17 @@ class NetworkState:
             await self._clear_state_alert(aid)
 
     async def _check_peer_table_alert(self):
+        # The monitor itself tracks every device it hears (unbounded). This alert
+        # mirrors the firmware peer table (TRXNET_MAX_PEERS) so the operator is
+        # warned when the most RAM-constrained node on the network can no longer
+        # hold every peer. Since v1.04 that limit is per-board (8 on ATmega2560,
+        # 24 on ESP32); set --max-peers to the smallest device's value.
         n = len(self.devices)
-        if n >= 6:
+        if n >= self.max_peers:
             await self._add_state_alert(
-                "peer_table_full", f"Peer table full ({n}/6 peers)")
+                "peer_table_full",
+                f"Peer table full ({n}/{self.max_peers} peers) — the smallest "
+                f"node can no longer track every device")
         else:
             await self._clear_state_alert("peer_table_full")
 
@@ -836,7 +845,8 @@ async def run(args):
     state = NetworkState(
         port=args.port,
         name=args.name,
-        max_pending=args.max_pending)
+        max_pending=args.max_pending,
+        max_peers=args.max_peers)
 
     # UDP socket
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -872,6 +882,7 @@ def main():
     p.add_argument("--http-port",   type=int, default=8080,    help="HTTP/WS port (default 8080)")
     p.add_argument("--name",        type=str, default="MON.01",help="Monitor device name")
     p.add_argument("--max-pending", type=int, default=2,       help="TRXNET_MAX_PENDING value for overflow detection")
+    p.add_argument("--max-peers",   type=int, default=8,       help="Smallest node's TRXNET_MAX_PEERS — peer-table-full alert threshold (default 8 = ATmega2560; use 24 for an all-ESP32 network)")
     args = p.parse_args()
     try:
         asyncio.run(run(args))
