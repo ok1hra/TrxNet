@@ -4,12 +4,35 @@
 
 // ---------- library version ----------
 // Bump on any API change. Apps may compile-check with #if TRXNET_VERSION >= ...
-#define TRXNET_VERSION 0x0103   // 1.03 — onPeerAdded() also fires on PROBE from a known peer (reboot)
+#define TRXNET_VERSION 0x0104   // 1.04 — per-board RAM defaults + setPriorityPrefixes() peer eviction
 
 // ---------- tuneable limits ----------
 // All values can be overridden by defining them before including this header.
+//
+// NOTE on overrides: this #ifndef mechanism works only for header-only includes
+// and PlatformIO `build_flags`. The Arduino IDE compiles library .cpp files in a
+// separate translation unit that does NOT see #defines from the user's .ino —
+// overriding from a sketch will silently break with C++ ODR violations (class
+// size mismatch between sketch and library). To change a value with the Arduino
+// IDE, edit this header directly (or the per-board blocks below).
+//
+// The three RAM-scaling limits (PEERS / PENDING / SEEN) default per board by SRAM
+// class, so a strong MCU (ESP32, ~320 KB) tracks the whole network while a weak
+// one (ATmega2560 8 KB, ATmega328 2 KB) keeps only what fits. On a full table,
+// high-value devices can be protected with TrxNet::setPriorityPrefixes(). Override
+// any single value to take full control.
+
+// Max peers held in the discovery table — the "how much of the network do I see"
+// knob. A peer that does not fit is dropped (or evicts the stalest non-priority
+// peer — see setPriorityPrefixes()). Each slot ~43 B on AVR.
 #ifndef TRXNET_MAX_PEERS
-#define TRXNET_MAX_PEERS         6
+  #if   defined(ESP32) || defined(ESP8266)
+    #define TRXNET_MAX_PEERS   24
+  #elif defined(__AVR_ATmega2560__)
+    #define TRXNET_MAX_PEERS    8
+  #else
+    #define TRXNET_MAX_PEERS    4
+  #endif
 #endif
 #ifndef TRXNET_MAX_SUBS
 #define TRXNET_MAX_SUBS          8
@@ -24,27 +47,32 @@
 #define TRXNET_MAX_PAYLOAD       64
 #endif
 // Shared pending queue for all outgoing CON messages.
-// One publish(..., TRX_CON) to N peers consumes N slots.
-// Each slot costs ~130 B on AVR (TRXNET_PKT_MAX + metadata).
-// Default 4 covers a per-peer state snapshot (2 topics) plus headroom for one
-// retry slot — assuming the publisher drains its greeting queue one peer per
-// loop() iteration, not all peers at once.
-//
-// NOTE on overrides: this #ifndef works only for header-only includes and
-// PlatformIO `build_flags`. The Arduino IDE compiles library .cpp files in a
-// separate translation unit that does NOT see #defines from the user's .ino —
-// overriding here from a sketch will silently break with C++ ODR violations
-// (class size mismatch between sketch and library). To change the value with
-// Arduino IDE, edit this header directly.
+// One publish(..., TRX_CON) to N peers consumes N slots; a per-peer greeting
+// snapshot of T topics sent one peer per loop() consumes T slots plus retry
+// headroom. Each slot costs ~130 B on AVR (TRXNET_PKT_MAX + metadata), making this
+// the most RAM-hungry limit — size it to the app's worst-case CON burst, not
+// blindly to peer count (e.g. the OI3 keyer greets 2 topics/peer → 8 is ample;
+// the WX node greets 7 topics on ESP32 where 24 is trivially covered).
 #ifndef TRXNET_MAX_PENDING
-#define TRXNET_MAX_PENDING       9   // WX greet snapshot = 7 topics queued at once (one peer/loop) + retry headroom
+  #if   defined(ESP32) || defined(ESP8266)
+    #define TRXNET_MAX_PENDING 24
+  #elif defined(__AVR_ATmega2560__)
+    #define TRXNET_MAX_PENDING  8
+  #else
+    #define TRXNET_MAX_PENDING  4
+  #endif
 #endif
 // Dedup ring buffer for incoming CON messages.
 // Must hold enough entries to cover the full retransmit window:
 // TRXNET_CON_MAX_RETRIES retransmits × number of simultaneous senders.
-// Default 16 covers 5 peers each with up to 3 retransmits with margin.
 #ifndef TRXNET_MAX_SEEN
-#define TRXNET_MAX_SEEN          16
+  #if   defined(ESP32) || defined(ESP8266)
+    #define TRXNET_MAX_SEEN    48
+  #elif defined(__AVR_ATmega2560__)
+    #define TRXNET_MAX_SEEN    16
+  #else
+    #define TRXNET_MAX_SEEN     8
+  #endif
 #endif
 
 // ---------- timing (ms) ----------
@@ -138,6 +166,19 @@ public:
     // again replaces the previous callback.
     void onPeerAdded(TrxPeerCallback cb);
 
+    // Protect high-value devices when the peer table (TRXNET_MAX_PEERS) is full.
+    // `prefixes` is a caller-owned array of `count` name-prefix strings, matched
+    // with strncmp — so "IC-705" matches "IC-705.01". When a peer whose name
+    // matches a prefix announces and the table is full, the stalest NON-matching
+    // peer is evicted to make room, so a RAM-constrained node keeps the devices
+    // that matter and sheds the rest. Peers already in the table are never evicted
+    // for a non-priority newcomer. The array must stay valid for the object's
+    // lifetime — pass static string literals. Passing NULL/0 disables the feature.
+    // No effect until the table actually fills. Note that dropping a peer only
+    // stops THIS node from sending to it (publish/publishTo); incoming messages are
+    // still received and dispatched to subscriptions regardless.
+    void setPriorityPrefixes(const char* const* prefixes, uint8_t count);
+
 private:
     struct Sub {
         char           path[TRXNET_MAX_TOPIC_LEN];
@@ -178,6 +219,10 @@ private:
 
     TrxPeerCallback _onPeerAdded;
 
+    const char* const* _prio;        // caller-owned array of priority name prefixes
+    uint8_t            _prioCount;
+
+    bool      _isPriority(const char* name) const;
     void      _sendDiscovery(uint8_t pktType, IPAddress dest);
     void      _handleIncoming();
     void      _processDiscovery(IPAddress src, const uint8_t* buf, size_t len);

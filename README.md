@@ -149,8 +149,8 @@ Sends `data` to all currently known peers on `path`.
 
 - If no peers are known, `publish()` does nothing.
 - `TRX_CON` improves reliability by retransmitting until ACK, but it is **not a hard delivery guarantee**. Delivery can still fail if the peer is offline, the pending queue is full, or the receiver's `loop()` is blocked too long.
-- TRX_CON delivers **at-least-once**. The receiver deduplicates retransmits via a ring buffer of `TRXNET_MAX_SEEN` (default 16) recent `(src, msgId)` pairs — the callback fires once per message as long as the buffer is not exhausted. The default covers 5 peers × 3 retransmits with margin. If `TRXNET_MAX_SEEN` is set too low for the actual traffic, duplicate callbacks are possible.
-- CON messages use a **shared** pending queue of `TRXNET_MAX_PENDING` (default 8) total slots across all peers. A single `publish(..., TRX_CON)` to many peers can consume the entire queue immediately. If the queue is full, additional CON sends are silently dropped. For multi-peer deployments, size `TRXNET_MAX_PENDING` for peak fan-out, not average traffic.
+- TRX_CON delivers **at-least-once**. The receiver deduplicates retransmits via a ring buffer of `TRXNET_MAX_SEEN` (per-board default, see [Configuration](#configuration)) recent `(src, msgId)` pairs — the callback fires once per message as long as the buffer is not exhausted. If `TRXNET_MAX_SEEN` is set too low for the actual traffic, duplicate callbacks are possible.
+- CON messages use a **shared** pending queue of `TRXNET_MAX_PENDING` total slots across all peers (per-board default, see [Configuration](#configuration)). A single `publish(..., TRX_CON)` to many peers can consume the entire queue immediately. If the queue is full, additional CON sends are silently dropped. For multi-peer deployments, size `TRXNET_MAX_PENDING` for peak fan-out, not average traffic.
 - Invalid usage is rejected silently: topic paths longer than `TRXNET_MAX_TOPIC_LEN` are ignored, oversized payloads are truncated to fit, and excess CON messages are dropped when the queue is full. If your application needs diagnostics, add checks in application code before calling `publish()` or `subscribe()`.
 
 ---
@@ -243,10 +243,11 @@ void loop() {
 
 Use `TRX_CON` for the snapshot to guarantee delivery — UDP drop at the moment
 of join would otherwise leave the new peer with stale state until the next
-change. The default `TRXNET_MAX_PENDING = 4` covers a single per-peer snapshot
-(2 topics) with retry headroom, assuming the per-iteration drain pattern shown
-above. If you publish more state topics per peer, raise `TRXNET_MAX_PENDING`
-accordingly (`N_topics + 2` for retry headroom).
+change. With the per-iteration drain pattern shown above, `TRXNET_MAX_PENDING`
+only needs to cover one peer's snapshot (`N_topics + 2` for retry headroom), not
+the whole peer count — the per-board defaults (8 on ATmega2560, 24 on ESP32)
+comfortably cover the 2-topic OI3 snapshot. If you publish many more state topics
+per peer, raise `TRXNET_MAX_PENDING` accordingly.
 
 **To change buffer sizes with Arduino IDE, edit `TrxNet.h` directly.** The
 `#ifndef` override pattern does not work for sketch-level `#define` because
@@ -255,6 +256,42 @@ does not see the sketch's macros — the resulting class-size mismatch between
 sketch and library produces a silent C++ ODR violation (or, with stricter
 compilers, a build failure). PlatformIO `build_flags` are the only portable
 way to override these values from outside the library.
+
+---
+
+### `void setPriorityPrefixes(const char* const* prefixes, uint8_t count)`
+
+Protects high-value devices when the peer table (`TRXNET_MAX_PEERS`) is full —
+so a RAM-constrained node (ATmega2560 / 328) keeps the devices that matter and
+sheds the rest, while a large-RAM node (ESP32) with room for everyone is
+unaffected.
+
+`prefixes` is a **caller-owned** array of `count` name-prefix strings, matched
+with `strncmp` — so `"IC-705"` matches `"IC-705.01"`. When a peer whose name
+matches a prefix announces and the table is full, the **stalest non-matching
+peer is evicted** to make room. Peers already in the table are never evicted for
+a *non-priority* newcomer, and if every slot already holds a priority peer the
+newcomer is simply dropped (no thrashing).
+
+```cpp
+static const char* const prio[] = { "IC-705", "AntHub", "PA." };
+
+void setup() {
+    // ... Ethernet/WiFi up ...
+    net.setPriorityPrefixes(prio, 3);   // array must stay valid for the object's lifetime
+    net.begin(deviceName);
+}
+```
+
+Pass `NULL, 0` to disable. The feature has **no effect until the table actually
+fills** — below `TRXNET_MAX_PEERS` peers, everyone is admitted normally.
+
+**What "dropping a peer" actually costs.** The peer table is *"who this node
+sends to"*. `publish()` unicasts to each known peer (it is not a UDP broadcast),
+so a peer not in the table will not receive this node's `publish()`/`publishTo()`
+and cannot be addressed by name. **Incoming** messages from that peer are still
+received and dispatched to subscriptions regardless — only the sender's friendly
+name is left blank. So prioritisation governs *outbound reach*, not reception.
 
 ---
 
@@ -447,23 +484,51 @@ void onCW(const char* from, const uint8_t* data, size_t len) {
 
 ## Configuration
 
-Override these `#define` values **before** including `TrxNet.h`:
+### Per-board defaults
+
+The three RAM-scaling limits default **per board** by SRAM class, so the same
+library sees the whole network on a big MCU and only what fits on a small one.
+Each board flashes its own binary, so this compile-time selection is exactly a
+"limit per processor" — no runtime cost. Defaults (auto-selected in `TrxNet.h`):
+
+| Limit | ESP32 / ESP8266 | ATmega2560 (8 KB) | 328 / other AVR (2 KB) |
+|-------|:---------------:|:-----------------:|:----------------------:|
+| `TRXNET_MAX_PEERS`   | 24 | 8 | 4 |
+| `TRXNET_MAX_PENDING` | 24 | 8 | 4 |
+| `TRXNET_MAX_SEEN`    | 48 | 16 | 8 |
+
+`TRXNET_MAX_PEERS` is the "how much of the network do I see" knob. A peer that
+does not fit is dropped — unless it matches a prefix registered with
+[`setPriorityPrefixes()`](#void-setpriorityprefixesconst-char-const-prefixes-uint8_t-count),
+which evicts the stalest non-priority peer instead. So a strong node sees
+everyone and a weak node keeps the essentials.
+
+RAM cost per extra slot on AVR: `TrxPeer` ~43 B, `Pending` ~130 B (the expensive
+one), `SeenMsg` ~6 B. `TRXNET_MAX_PENDING` need not scale with peer count — size
+it to the app's worst-case CON burst (see `onPeerAdded` greet pattern above),
+not blindly to `TRXNET_MAX_PEERS`.
+
+### Overriding
+
+Override any value **before** including `TrxNet.h` (PlatformIO `build_flags`), or
+edit the header directly for the Arduino IDE — see the ODR note under
+`onPeerAdded`. Any value you set wins over the per-board default:
 
 ```cpp
-#define TRXNET_MAX_PEERS         8      // max simultaneous peers
+#define TRXNET_MAX_PEERS         12     // override peer table size for this board
 #define TRXNET_MAX_SUBS          16     // max subscriptions
 #define TRXNET_MAX_DEVICE_NAME   32     // device name buffer (incl. null)
 #define TRXNET_MAX_TOPIC_LEN     32     // topic path buffer (incl. null)
 #define TRXNET_MAX_PAYLOAD       64     // max payload bytes per message
-#define TRXNET_MAX_PENDING       8      // shared CON retransmit queue (>= TRXNET_MAX_PEERS)
-#define TRXNET_MAX_SEEN          16     // incoming CON dedup ring buffer
+#define TRXNET_MAX_PENDING       12     // shared CON retransmit queue (peak fan-out)
+#define TRXNET_MAX_SEEN          24     // incoming CON dedup ring buffer
 #define TRXNET_ANNOUNCE_MS       30000  // keepalive broadcast interval
 #define TRXNET_PEER_TIMEOUT_MS   95000  // peer removed after this silence (~3 missed keepalives)
 #define TRXNET_CON_TIMEOUT_MS    2000   // CON retransmit interval
 #define TRXNET_CON_MAX_RETRIES   3      // CON attempts before giving up
 ```
 
-On ATMEGA2560 (8 KB RAM) review RAM usage before enabling larger buffers. Increasing `TRXNET_MAX_PENDING` and `TRXNET_MAX_SEEN` improves robustness but directly increases static RAM — each `Pending` slot is ~120 bytes, each `SeenMsg` slot is ~6 bytes. Lower these values if RAM is tight; increase them only if CON reliability on a busy network matters more than memory.
+On ATMEGA2560 (8 KB RAM) review RAM usage before raising these — `TRXNET_MAX_PENDING` dominates. Lower them if RAM is tight; increase them only if CON reliability on a busy network matters more than memory. On ESP32 the defaults are already generous and can be raised freely.
 
 ---
 
@@ -499,7 +564,7 @@ void onCW(...) {
 ```
 
 **2. Do not send more simultaneous CON messages than `TRXNET_MAX_PENDING`.**  
-Each call to `publish(..., TRX_CON)` occupies one pending slot **per peer**. With 5 peers and `TRXNET_MAX_PENDING = 4`, only 4 of the 5 sends will be queued; the 5th is silently dropped. Increase `TRXNET_MAX_PENDING` or send CON messages one at a time.
+Each call to `publish(..., TRX_CON)` occupies one pending slot **per peer**. If more slots are needed than `TRXNET_MAX_PENDING` (per-board default: 8 on ATmega2560, 24 on ESP32), the excess sends are silently dropped. Increase `TRXNET_MAX_PENDING` or send CON messages one at a time (per-iteration drain).
 
 **3. Do not call `begin()` before the network is up.**
 ```cpp
@@ -523,6 +588,9 @@ All devices must pass the same `port` to the constructor. Devices on different p
 
 **8. Do not rely on message ordering.**  
 UDP does not guarantee order. Two `publish("/freq", ...)` calls may arrive in reverse order or the first may be lost entirely (TRX_NON). Design for the latest value winning.
+
+**9. Do not assume every device fits in every peer table.**  
+On a network larger than a small MCU's `TRXNET_MAX_PEERS`, that node holds only the first peers to announce and silently drops the rest — it then cannot `publish`/`publishTo` the dropped ones. Either raise `TRXNET_MAX_PEERS` (RAM permitting) or register the must-reach devices with `setPriorityPrefixes()` so they evict low-value peers instead of being dropped. Count the *other* devices: a node needs `TRXNET_MAX_PEERS ≥` number of peers it must actually address (the passive Python monitor does not consume a slot).
 
 ---
 

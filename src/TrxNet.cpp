@@ -22,7 +22,7 @@
 // ========================================================================
 TrxNet::TrxNet(UDP& udp, uint16_t port)
     : _udp(udp), _port(port), _lastAnnounce(0), _msgId(1), _seenIdx(0),
-      _onPeerAdded(NULL)
+      _onPeerAdded(NULL), _prio(NULL), _prioCount(0)
 {
     _name[0] = '\0';
     memset(_peers,   0, sizeof(_peers));
@@ -160,6 +160,19 @@ void TrxNet::setPort(uint16_t port) {
 
 void TrxNet::onPeerAdded(TrxPeerCallback cb) {
     _onPeerAdded = cb;
+}
+
+void TrxNet::setPriorityPrefixes(const char* const* prefixes, uint8_t count) {
+    _prio      = prefixes;
+    _prioCount = prefixes ? count : 0;
+}
+
+bool TrxNet::_isPriority(const char* name) const {
+    for (uint8_t i = 0; i < _prioCount; i++) {
+        if (_prio[i] && strncmp(name, _prio[i], strlen(_prio[i])) == 0)
+            return true;
+    }
+    return false;
 }
 
 int TrxNet::peerCount() const {
@@ -539,6 +552,32 @@ TrxPeer* TrxNet::_findOrAddPeer(const char* name, IPAddress ip, uint16_t port) {
             _peers[i].active   = true;
             if (_onPeerAdded) _onPeerAdded(&_peers[i]);
             return &_peers[i];
+        }
+    }
+
+    // Table full — a priority peer may evict the stalest non-priority peer so the
+    // devices that matter stay visible on a RAM-constrained node. Non-priority
+    // newcomers (and priority ones with no non-priority peer to displace) are
+    // dropped, as before.
+    if (_isPriority(name)) {
+        int      victim = -1;
+        uint32_t oldest = 0;
+        uint32_t now    = millis();
+        for (int i = 0; i < TRXNET_MAX_PEERS; i++) {
+            if (_peers[i].active && !_isPriority(_peers[i].name)) {
+                uint32_t age = now - _peers[i].lastSeen;
+                if (victim < 0 || age > oldest) { victim = i; oldest = age; }
+            }
+        }
+        if (victim >= 0) {
+            strncpy(_peers[victim].name, name, TRXNET_MAX_DEVICE_NAME - 1);
+            _peers[victim].name[TRXNET_MAX_DEVICE_NAME - 1] = '\0';
+            _peers[victim].ip       = ip;
+            _peers[victim].port     = port;
+            _peers[victim].lastSeen = millis();
+            _peers[victim].active   = true;
+            if (_onPeerAdded) _onPeerAdded(&_peers[victim]);
+            return &_peers[victim];
         }
     }
     return NULL;
