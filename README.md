@@ -510,23 +510,43 @@ not blindly to `TRXNET_MAX_PEERS`.
 
 ### Overriding
 
-Override any value **before** including `TrxNet.h` (PlatformIO `build_flags`), or
-edit the header directly for the Arduino IDE — see the ODR note under
-`onPeerAdded`. Any value you set wins over the per-board default:
+> ⚠️ **Never `#define` these in your `.ino`/`.cpp` before including `TrxNet.h`.**
+> The macros marked *(sizes class)* below change `sizeof(TrxNet)`. `TrxNet.cpp` is
+> a **separate translation unit** that does not see your sketch's `#define`s, so it
+> keeps the defaults — the sketch and library then disagree on the object layout
+> (a C++ ODR violation). The library constructor initializes more array slots than
+> the sketch allocated, corrupting adjacent global memory. The symptom is bizarre
+> and far away (e.g. a `LoadProhibited` crash in the first `nvs_open()` /
+> `EEPROM.begin()`). Since v1.05 `begin()` catches this — you get a **link error**
+> "undefined reference to `trxnet_detail::abi_tag<...>`" pointing at your
+> `begin()` call, not silent corruption.
 
-```cpp
-#define TRXNET_MAX_PEERS         12     // override peer table size for this board
-#define TRXNET_MAX_SUBS          16     // max subscriptions
-#define TRXNET_MAX_DEVICE_NAME   32     // device name buffer (incl. null)
-#define TRXNET_MAX_TOPIC_LEN     32     // topic path buffer (incl. null)
-#define TRXNET_MAX_PAYLOAD       64     // max payload bytes per message
-#define TRXNET_MAX_PENDING       12     // shared CON retransmit queue (peak fan-out)
-#define TRXNET_MAX_SEEN          24     // incoming CON dedup ring buffer
-#define TRXNET_ANNOUNCE_MS       30000  // keepalive broadcast interval
-#define TRXNET_PEER_TIMEOUT_MS   95000  // peer removed after this silence (~3 missed keepalives)
-#define TRXNET_CON_TIMEOUT_MS    2000   // CON retransmit interval
-#define TRXNET_CON_MAX_RETRIES   3      // CON attempts before giving up
+**The two safe ways to override** (both apply to *every* translation unit):
+
+- **PlatformIO** — `build_flags = -DTRXNET_MAX_PENDING=12` in `platformio.ini`.
+- **Arduino IDE** — edit the value **in `TrxNet.h`** directly (the per-board
+  `#ifndef` blocks). The IDE has no per-sketch global-define mechanism.
+
+Values you can set (defaults are per-board — see the header):
+
 ```
+TRXNET_MAX_PEERS         12     // (sizes class) peer/discovery table
+TRXNET_MAX_SUBS          16     // (sizes class) max subscriptions
+TRXNET_MAX_DEVICE_NAME   32     // (sizes class) device name buffer (incl. null)
+TRXNET_MAX_TOPIC_LEN     32     // (sizes class) topic path buffer (incl. null)
+TRXNET_MAX_PAYLOAD       64     // (sizes class) max payload bytes per message
+TRXNET_MAX_PENDING       12     // (sizes class) shared CON retransmit queue (peak fan-out)
+TRXNET_MAX_SEEN          24     // (sizes class) incoming CON dedup ring buffer
+TRXNET_ANNOUNCE_MS       30000  // behavior only — keepalive broadcast interval
+TRXNET_PEER_TIMEOUT_MS   95000  // behavior only — peer removed after this silence
+TRXNET_CON_TIMEOUT_MS    2000   // behavior only — CON retransmit interval
+TRXNET_CON_MAX_RETRIES   3      // behavior only — CON attempts before giving up
+```
+
+The *(sizes class)* macros carry the ODR hazard above. The *behavior only* macros
+are used solely inside `TrxNet.cpp`, so a sketch-side `#define` of them does not
+corrupt anything — it is simply **silently ignored** (the .cpp never sees it), which
+is its own footgun; set them via `build_flags` or in the header too.
 
 On ATMEGA2560 (8 KB RAM) review RAM usage before raising these — `TRXNET_MAX_PENDING` dominates. Lower them if RAM is tight; increase them only if CON reliability on a busy network matters more than memory. On ESP32 the defaults are already generous and can be raised freely.
 

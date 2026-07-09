@@ -1,6 +1,15 @@
 #include "TrxNet.h"
 #include <string.h>
 
+// ---- ABI guard (see TrxNet.h) ----
+// Define the template and explicitly instantiate it for the library's own
+// sizeof(TrxNet). A caller whose sizeof(TrxNet) differs references a different,
+// never-instantiated abi_tag<N> → undefined-reference link error.
+namespace trxnet_detail {
+    template <size_t N> size_t abi_tag() { return N; }
+    template size_t abi_tag<sizeof(TrxNet)>();
+}
+
 // ---- discovery packet constants ----
 // First byte 0xAA has version bits 10 — invalid CoAP, safe to distinguish.
 #define DISC_MAGIC     0xAA
@@ -34,7 +43,20 @@ TrxNet::TrxNet(UDP& udp, uint16_t port)
 // ========================================================================
 // Public API
 // ========================================================================
-void TrxNet::begin(const char* name) {
+void TrxNet::begin(const char* name, size_t callerAbi) {
+    // ABI guard: last-resort run-time trap if the sketch and library disagree on
+    // sizeof(TrxNet) (a TRXNET_MAX_* #defined only in the sketch). The link-time
+    // guard in TrxNet.h normally catches this first. See ABI WARNING in TrxNet.h.
+    if (callerAbi != sizeof(TrxNet)) {
+        for (;;) {
+            Serial.print(F("TRXNET FATAL: ABI mismatch — sketch sizeof(TrxNet)="));
+            Serial.print((unsigned long)callerAbi);
+            Serial.print(F(", library="));
+            Serial.print((unsigned long)sizeof(TrxNet));
+            Serial.println(F(". Do NOT #define TRXNET_MAX_* in the sketch."));
+            delay(2000);
+        }
+    }
     strncpy(_name, name, TRXNET_MAX_DEVICE_NAME - 1);
     _name[TRXNET_MAX_DEVICE_NAME - 1] = '\0';
     _udp.begin(_port);

@@ -4,7 +4,7 @@
 
 // ---------- library version ----------
 // Bump on any API change. Apps may compile-check with #if TRXNET_VERSION >= ...
-#define TRXNET_VERSION 0x0104   // 1.04 — per-board RAM defaults + setPriorityPrefixes() peer eviction
+#define TRXNET_VERSION 0x0105   // 1.05 — begin() ABI guard (catches sketch-side TRXNET_MAX_* ODR mismatch)
 
 // ---------- tuneable limits ----------
 // All values can be overridden by defining them before including this header.
@@ -21,6 +21,19 @@
 // one (ATmega2560 8 KB, ATmega328 2 KB) keeps only what fits. On a full table,
 // high-value devices can be protected with TrxNet::setPriorityPrefixes(). Override
 // any single value to take full control.
+
+// ============================================================================
+// ABI WARNING — TRXNET_MAX_PEERS and TRXNET_MAX_PENDING size members of class
+// TrxNet, so they change sizeof(TrxNet). Override them ONLY via a global build
+// flag (e.g. -DTRXNET_MAX_PENDING=6 in platform/compiler options), which applies
+// to every translation unit. NEVER `#define` them in a .ino/.cpp before including
+// this header: TrxNet.cpp is compiled separately with the defaults, so the class
+// layout would differ between the sketch and the library — the library ctor then
+// initializes more array slots than the sketch allocated, corrupting ~kB of
+// adjacent global memory (a classic ODR violation). The symptom is bizarre and
+// far away, e.g. a LoadProhibited crash in the first nvs_open()/EEPROM.begin().
+// begin() has a compile-/run-time guard that catches this — see below.
+// ============================================================================
 
 // Max peers held in the discovery table — the "how much of the network do I see"
 // knob. A peer that does not fit is dropped (or evicts the stalest non-priority
@@ -53,6 +66,8 @@
 // the most RAM-hungry limit — size it to the app's worst-case CON burst, not
 // blindly to peer count (e.g. the OI3 keyer greets 2 topics/peer → 8 is ample;
 // the WX node greets 7 topics on ESP32 where 24 is trivially covered).
+// NB: sizes class TrxNet — set via build flag only, never #define in a sketch.
+// See the ABI WARNING above TRXNET_MAX_PEERS.
 #ifndef TRXNET_MAX_PENDING
   #if   defined(ESP32) || defined(ESP8266)
     #define TRXNET_MAX_PENDING 24
@@ -119,6 +134,16 @@ typedef void (*TrxNetCallback)(const char* from, const uint8_t* data, size_t len
 // loop (e.g. set a flag, queue the peer name) to stay clear of UDP re-entrancy.
 typedef void (*TrxPeerCallback)(const TrxPeer* peer);
 
+// ---------- ABI guard ----------
+// abi_tag<N> is only *declared* here and *explicitly instantiated* in TrxNet.cpp
+// for N == the library's own sizeof(TrxNet). begin()'s default argument ODR-uses
+// abi_tag<sizeof(TrxNet)> as seen by the *caller's* translation unit, so if the
+// sketch's sizeof(TrxNet) differs (a TRXNET_MAX_* mismatch, see ABI WARNING above)
+// the link fails with "undefined reference to trxnet_detail::abi_tag<...>()".
+// The same default arg also passes the caller's sizeof for a friendly run-time
+// check in begin(). This turns silent memory corruption into a build/boot error.
+namespace trxnet_detail { template <size_t N> size_t abi_tag(); }
+
 // ---------- class ----------
 class TrxNet {
 public:
@@ -128,7 +153,10 @@ public:
 
     // Call once after network is up.
     // name : device identity string assembled at runtime, e.g. "transceiver.01". Max 31 chars.
-    void begin(const char* name);
+    // callerAbi : leave defaulted — it carries the caller's sizeof(TrxNet) for the
+    //             ABI guard (see trxnet_detail::abi_tag above). Do not pass it.
+    void begin(const char* name,
+               size_t callerAbi = (trxnet_detail::abi_tag<sizeof(TrxNet)>(), sizeof(TrxNet)));
 
     // Call from loop() — processes incoming packets, keepalive, CON retransmit
     void loop();
