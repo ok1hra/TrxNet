@@ -197,6 +197,38 @@ bool TrxNet::_isPriority(const char* name) const {
     return false;
 }
 
+bool TrxNet::isPriorityPeer(const char* name) const {
+    return name ? _isPriority(name) : false;
+}
+
+uint8_t TrxNet::parsePriorityPrefixes(const char* src,
+                                      char        (*buf)[TRXNET_MAX_PRIO_PREFIX_LEN + 1],
+                                      const char* *ptr,
+                                      uint8_t     maxTokens) {
+    uint8_t count = 0;
+    if (!src || !buf || !ptr) return 0;
+
+    const char* p = src;
+    while (*p && count < maxTokens) {
+        while (*p == ' ' || *p == '\t') p++;   // skip separators (collapses runs)
+        if (!*p) break;
+
+        uint8_t n = 0;
+        while (*p && *p != ' ' && *p != '\t') {
+            if (n < TRXNET_MAX_PRIO_PREFIX_LEN) {
+                char c = *p;
+                if (c >= 'a' && c <= 'z') c = (char)(c - 'a' + 'A');   // upper-case
+                buf[count][n++] = c;
+            }
+            p++;                                // keep consuming an over-long token
+        }
+        buf[count][n] = '\0';
+        ptr[count] = buf[count];
+        count++;
+    }
+    return count;
+}
+
 int TrxNet::peerCount() const {
     int n = 0;
     for (int i = 0; i < TRXNET_MAX_PEERS; i++)

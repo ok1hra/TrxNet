@@ -7,6 +7,11 @@ P2P telemetry and messaging for ham radio devices over a local network.
 - Supports **ESP32** (WiFiUDP) and **ATMEGA2560 + Ethernet shield** (EthernetUDP)
 - No dynamic memory allocation — safe for long-running embedded devices
 
+> **Building a device?** [INTEGRATION.md](INTEGRATION.md) is the normative,
+> form-independent profile for settings, publish/subscribe roles and diagnostics
+> — the convergence target for a functionally uniform implementation across the
+> device family.
+
 Currently used in these devices
 - [IP-rotator](https://github.com/ok1hra/IP-rotator)
 - [ESP32 QRPlog for IC-705](https://github.com/ok1hra/IC-705_Interface)

@@ -4,7 +4,7 @@
 
 // ---------- library version ----------
 // Bump on any API change. Apps may compile-check with #if TRXNET_VERSION >= ...
-#define TRXNET_VERSION 0x0105   // 1.05 — begin() ABI guard (catches sketch-side TRXNET_MAX_* ODR mismatch)
+#define TRXNET_VERSION 0x0106   // 1.06 — isPriorityPeer() + parsePriorityPrefixes() helper (additive, wire-compatible)
 
 // ---------- tuneable limits ----------
 // All values can be overridden by defining them before including this header.
@@ -55,6 +55,13 @@
 #endif
 #ifndef TRXNET_MAX_TOPIC_LEN
 #define TRXNET_MAX_TOPIC_LEN     32   // including null terminator
+#endif
+// Canonical clamp for a single priority-prefix token (see setPriorityPrefixes /
+// parsePriorityPrefixes). Device names are "TYPE.NN" with TYPE 2–3 chars, so a
+// 4-char prefix uniquely selects a type. This does NOT size class TrxNet — the
+// prefix buffer is caller-owned — so it is safe to override from a sketch.
+#ifndef TRXNET_MAX_PRIO_PREFIX_LEN
+#define TRXNET_MAX_PRIO_PREFIX_LEN  4
 #endif
 #ifndef TRXNET_MAX_PAYLOAD
 #define TRXNET_MAX_PAYLOAD       64
@@ -206,6 +213,36 @@ public:
     // stops THIS node from sending to it (publish/publishTo); incoming messages are
     // still received and dispatched to subscriptions regardless.
     void setPriorityPrefixes(const char* const* prefixes, uint8_t count);
+
+    // Returns true if `name` matches one of the prefixes registered with
+    // setPriorityPrefixes() (same strncmp prefix-match as the internal eviction
+    // logic). Use it to MARK protected devices in a diagnostics/peer list — e.g.
+    // for (int i=0;i<net.peerCount();i++) { const TrxPeer* p=net.peer(i);
+    //     bool prot = net.isPriorityPeer(p->name); ... }
+    // Reflects membership of the priority set, independent of whether the table
+    // is currently full. Returns false when no prefixes are set. This is a pure
+    // query — it adds no data member, so it does not change sizeof(TrxNet) and is
+    // safe to call from any build (see INTEGRATION.md §10 "Compatibility").
+    bool isPriorityPeer(const char* name) const;
+
+    // Parse a space-separated priority-prefix string (e.g. "OI3 ANT ROT") into a
+    // caller-owned, stable buffer + pointer array ready for setPriorityPrefixes().
+    // Normalises exactly as INTEGRATION.md §5 prescribes: skips empty tokens,
+    // upper-cases, and clamps each token to TRXNET_MAX_PRIO_PREFIX_LEN chars and
+    // the list to `maxTokens`. Returns the token count written.
+    //
+    //   char        buf[8][TRXNET_MAX_PRIO_PREFIX_LEN + 1];   // stable storage
+    //   const char* ptr[8];
+    //   uint8_t n = TrxNet::parsePriorityPrefixes("oi3 ant", buf, ptr, 8);
+    //   net.setPriorityPrefixes(n ? ptr : nullptr, n);        // before begin()
+    //
+    // `buf` and `ptr` MUST outlive the TrxNet object (the library keeps `ptr`).
+    // Static (no `this`) and touches only caller memory, so it is ABI-neutral.
+    static uint8_t parsePriorityPrefixes(
+        const char* src,
+        char        (*buf)[TRXNET_MAX_PRIO_PREFIX_LEN + 1],
+        const char* *ptr,
+        uint8_t     maxTokens);
 
 private:
     struct Sub {
