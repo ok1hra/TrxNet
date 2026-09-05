@@ -21,6 +21,7 @@ Currently used in these devices
 - [ESP32 DIN rail module (Config: TrxNetSwitch)](https://github.com/ok1hra/eth-din-dev-kit)
 - [3D print WX station](https://github.com/ok1hra/3D-print-WX-station)
 - [ESP32 e-ink display](https://github.com/ok1hra/esp32-e-ink)
+- [EXPERT 1K-FA linear amplifier web console](https://github.com/ok1hra/ExpertWebConsole)
 - NodeRed
 
 ---
@@ -326,6 +327,7 @@ if (NET_ID != 0x00) {
 | `ROT` | `ROT.01` | IP-rotator — publishes `/azimuth`, `/elevation`; subscribes `/s-azimuth`, `/s-elevation` |
 | `DIN` | `DIN.01` | ETH DIN rail dev kit — subscribes `/s-gpio` (set 8 outputs); publishes `/gpio` (current output state) |
 | `WX` | `WX.01` | ESP32-POE weather station — publishes `/temp`, `/hum`, `/press`, `/rain`, `/winddir`, `/windavg`, `/windmax` (publish-only) |
+| `PA` | `PA.01` | EXPERT 1K-FA linear amplifier — publishes `/pa-flags`, `/fwd`, `/ref`, `/swr`, `/band`; subscribes `/hz`, `/s-on`, `/s-operate`, `/s-full`, `/s-tune`. A Python peer, not firmware: the amplifier's serial protocol is spoken by a daemon on a Linux box |
 
 Device type prefixes are arbitrary strings — the library does not interpret them. The table above documents the convention used across the remoteQTH device family.
 
@@ -374,6 +376,56 @@ map their internal mode to the nearest CI-V equivalent.
 | `0x17` | DV (D-STAR) |
 
 ---
+
+### Amplifier state — `/pa-flags`, `uint16_t` LE
+
+The `PA` device publishes `/pa-flags` as a bit map. The **low byte is the
+amplifier's own FLAGS byte**, passed through unchanged, so a reading can be
+checked against the SPE protocol document directly; the high byte carries what
+the amplifier itself cannot know.
+
+It is deliberately **not** called `/flags`: that topic already carries the CI-V
+transceiver bitfield (PTT, SPLIT, RIT…), and one name with two bit maps means a
+consumer that meets both reads one as the other. A separate name makes an
+unknown publisher show up as undecoded rather than as plausible nonsense.
+
+| bit | meaning | | bit | meaning |
+|-----|---------|---|-----|---------|
+| 0 | TUNE — tuning right now | | 7 | always 0 |
+| 1 | OPERATE (0 = STANDBY) | | 8 | ON — powered and running |
+| 2 | TX | | 9 | LINK — telemetry is arriving |
+| 3 | ALARM | | 10 | REV2 — protocol revision |
+| 4 | FULL (0 = half power) | | 11–15 | reserved, zero |
+| 5 | CONTEST | | | |
+| 6 | BEEP | | | |
+
+Bit 7 is forced to zero on purpose: the amplifier uses it for `PA_PROT` in
+protocol Rev. 1.0 and for the temperature scale in Rev. 2.0, so it would mean
+two different things on the wire.
+
+```cpp
+// Is the amplifier transmitting?
+void onPaFlags(const char* from, const uint8_t* data, size_t len) {
+    if (len < sizeof(uint16_t)) return;
+    uint16_t f;
+    memcpy(&f, data, sizeof(f));
+    bool tx = f & (1 << 2), alarm = f & (1 << 3);
+}
+```
+
+### Power and SWR — scaled integers, LE
+
+| topic | type | unit × scale | example wire value |
+|-------|------|--------------|--------------------|
+| `/fwd` | `uint16_t` | W × 10, forward | 850.0 W → 8500 |
+| `/ref` | `uint16_t` | W × 10, reflected | 12.5 W → 125 |
+| `/swr` | `uint16_t` | SWR × 100 | 1.35 → 135 |
+| `/band` | `uint8_t` | band in metres | 20 m → 20 |
+
+Both power topics carry the **instantaneous** reading, not a peak: they are
+published with every telemetry packet while transmitting (5–8 per second) and on
+change otherwise. `/swr` uses `0` for "no answer" — below a few watts the ratio
+is noise — and `65535` for infinite.
 
 ### GPIO byte — 8-bit output map
 
@@ -467,7 +519,7 @@ void onMode(const char* from, const uint8_t* data, size_t len) {
 uint16_t flags = FLAG_PTT | FLAG_SPLIT;
 net.publish("/flags", (uint8_t*)&flags, sizeof(flags));
 
-void onFlags(const char* from, const uint8_t* data, size_t len) {
+void onPaFlags(const char* from, const uint8_t* data, size_t len) {
     if (len < sizeof(uint16_t)) return;
     uint16_t flags;
     memcpy(&flags, data, sizeof(flags));

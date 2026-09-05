@@ -126,7 +126,16 @@ Press `[INJECT]` on any device row to open the inject form.
 | `/flags` | `uint16 LE` CI-V bitmask | `PTT \| SPLIT` |
 | `/cw` | ASCII string | `"CQ CQ DE OK1HRA"` |
 | `/azimuth`, `/elevation`, `/s-azimuth`, `/s-elevation` | `uint16 LE` degrees | `180°` |
+| `/temp`, `/hum`, `/press`, `/rain`, `/winddir`, `/windavg`, `/windmax` | `uint16 LE` scaled | `21.35 °C` |
+| `/pa-flags` | `uint16 LE` amplifier bitmask | `OPERATE \| FULL \| ON` |
+| `/fwd`, `/ref` | `uint16 LE` W × 10 | `850.0 W` |
+| `/swr` | `uint16 LE` SWR × 100 | `1.35`, `—`, `∞` |
+| `/band` | `uint8` metres | `20 m` |
 | other | raw bytes | `0x 03 A1 FF` |
+
+`/flags` and `/pa-flags` are separate topics on purpose: the bit maps have
+nothing in common, and one name would have an amplifier in OPERATE labelled as
+a transceiver in SPLIT.
 
 ---
 

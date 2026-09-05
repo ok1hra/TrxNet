@@ -60,6 +60,7 @@ name = "<TYPE>.<NET_ID as 2-digit lowercase hex>"     e.g.  705.01, OI3.ff, ROT.
 | `WX`  | Weather station                     |
 | `INK` | e-ink telemetry display             |
 | `ANT` | AntHub-NET antenna matrix           |
+| `PA`  | EXPERT 1K-FA linear amplifier       |
 
 New types MUST NOT collide on their first 4 characters with an existing type
 (priority prefixes match on ≤4 chars — see §5).
@@ -200,6 +201,20 @@ Notes:
 - The greeting snapshot is part of the **publish** direction — it MUST NOT be
   sent when `publish_enable` is off.
 
+### 6.2b More than one publisher of the same `/x` (MUST)
+
+A state topic is owned by *a* device, not by *the* device: `/hz` is published by
+both `705` and `OI3`, and any subscriber that follows it blindly follows
+whichever spoke last. A device that acts on a state topic — tunes to it, steps a
+rotator to it, switches an antenna on it — **MUST** therefore be able to
+restrict which peer it accepts that topic from, by name, and the setting **MUST**
+be reachable in the same place as `subscribe_enable`.
+
+An empty restriction means "any peer", which is the right default for a display
+and the wrong one for anything that moves. The peer name in a packet is
+**unsigned**: this is a guard against a misconfigured device, not against an
+attacker.
+
 ### 6.3 Recommended code structure (SHOULD)
 
 Mirror the split in code with two functions:
@@ -238,6 +253,29 @@ canonical set is summarised here with its direction:
 | `/s-azimuth`/`/s-elevation` | sub | uint16 | commanded degrees          |
 | `/s-gpio`   | sub | uint8     | commanded 8-bit output map            |
 | `/s-cw`     | sub | char[]    | CW/text, `TRX_CON`; single `0x00` byte = "stop sending" |
+| `/pa-flags` | pub | uint16    | amplifier state, bit map below |
+| `/fwd`      | pub | uint16    | forward power, W × 10 (instantaneous, not a peak) |
+| `/ref`      | pub | uint16    | reflected power, W × 10 (instantaneous) |
+| `/swr`      | pub | uint16    | SWR × 100; `0` = unknown, `65535` = infinite |
+| `/band`     | pub | uint8     | band in metres: 160, 80, 40, 30, 20, 17, 15, 12, 10, 6 |
+| `/s-on`     | sub | uint8     | 0/1 — mains / standby of a whole device |
+| `/s-operate`| sub | uint8     | 0 = STANDBY, 1 = OPERATE |
+| `/s-full`   | sub | uint8     | 0 = half power, 1 = full power |
+| `/s-tune`   | sub | uint8     | 1 = start tuning (momentary; 0 is a no-op) |
+
+`/pa-flags` carries the amplifier's state. Its low byte is the amplifier's own
+FLAGS byte, passed through unchanged, so a reading can be checked against the
+SPE protocol document directly:
+
+| bit | meaning | | bit | meaning |
+|----|---------|---|----|---------|
+| 0 | TUNE | | 7 | always 0 — means two different things by amplifier revision |
+| 1 | OPERATE | | 8 | ON — the device is powered and running |
+| 2 | TX | | 9 | LINK — telemetry is arriving |
+| 3 | ALARM | | 10 | REV2 — protocol revision of the amplifier |
+| 4 | FULL | | 11–15 | reserved, zero |
+| 5 | CONTEST | | | |
+| 6 | BEEP | | | |
 
 A new topic MUST follow §6.1 direction naming and MUST document its encoding
 here before use across devices.
@@ -283,6 +321,15 @@ normative; the **rendering** is not.
 `tableFull` is the key troubleshooting signal — it tells the operator *why* a
 device X is not visible (the table filled and X was evicted or never admitted).
 Prioritised peers MUST be visibly marked in whatever list form is used.
+
+> **The priority mark is per-node.** `priority` answers *"do **I** protect this
+> peer?"* — it is a local, receiver-side decision that **never travels on the
+> wire** (see §5, §10.1). It is therefore only meaningful, and only visible, in a
+> device's **own** diagnostics. The passive TrxNet Monitor sniffs packets and so
+> cannot show it: it knows *who* is on the network, not *whom each node
+> prioritises*. Surfacing priority in the monitor would require sending it on the
+> wire — a discovery-format change subject to the forward-compatibility rule in
+> §10.1 — which is out of scope for the layout-neutral v1.06 extensions.
 
 ### 8.2 Serialisation (SHOULD)
 
@@ -412,6 +459,7 @@ so priority prefixes matter most there). All others are ESP32 (`= 24`).
 | **WX**  | ESP32 | publisher-only | 7 WX topics | — | on | *(hidden)* | `INK` | — |
 | **INK** | ESP32 | subscriber-only | — | up to 8 arbitrary `/x` paths (dynamic) | *(hidden)* | on | type of mirrored source (`WX`/`ROT`/…) | — |
 | **ANT** | ESP32 | sub + commander | — | `/hz`, `/gpio` | *(hidden)* | on | `OI3 705` | `trxnetDinName` → DIN `/s-gpio` |
+| **PA** | Linux/Python | pub + sub | `/pa-flags`, `/fwd`, `/ref`, `/swr`, `/band` | `/hz`, `/s-on`, `/s-operate`, `/s-full`, `/s-tune` | on | **off** | `705 OI3` | — |
 
 Notes:
 - **INK** is the generalised subscriber: it maps N configured topic paths to

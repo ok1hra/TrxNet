@@ -106,6 +106,15 @@ CI_V_FLAGS = [
     (8,  "MONI"), (9,  "VOX"),   (10, "SCAN"),
 ]
 
+# EXPERT 1K-FA amplifier, topic /pa-flags. A separate topic from /flags on
+# purpose - the bit maps are unrelated, and one name would have the monitor
+# label an amplifier in OPERATE as a transceiver in SPLIT.
+PA_FLAGS = [
+    (0, "TUNE"),  (1, "OPERATE"), (2, "TX"),   (3, "ALARM"),
+    (4, "FULL"),  (5, "CONTEST"), (6, "BEEP"),
+    (8, "ON"),    (9, "LINK"),    (10, "REV2"),
+]
+
 # ── payload decoder ───────────────────────────────────────────────────────────
 
 def decode_payload(topic: str, data: bytes) -> str:
@@ -144,6 +153,20 @@ def decode_payload(topic: str, data: bytes) -> str:
             return f"{struct.unpack_from('<H', data)[0]}°"
         if topic in ("/windavg", "/windmax"):
             return f"{struct.unpack_from('<H', data)[0] / 100:.2f} m/s"
+        # EXPERT 1K-FA amplifier
+        if topic == "/pa-flags":
+            val = struct.unpack_from("<H", data)[0]
+            names = [n for bit, n in PA_FLAGS if val & (1 << bit)]
+            return (" | ".join(names)) if names else "0x0000"
+        if topic in ("/fwd", "/ref"):
+            return f"{struct.unpack_from('<H', data)[0] / 10:.1f} W"
+        if topic == "/swr":
+            raw = struct.unpack_from("<H", data)[0]
+            return "—" if raw == 0 else "∞" if raw == 0xFFFF else f"{raw / 100:.2f}"
+        if topic == "/band":
+            return f"{data[0]} m"
+        if topic in ("/s-on", "/s-operate", "/s-full", "/s-tune"):
+            return "1" if data[0] else "0"
     except Exception:
         pass
     return "0x " + " ".join(f"{b:02X}" for b in data)
