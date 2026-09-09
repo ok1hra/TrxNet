@@ -126,16 +126,25 @@ Press `[INJECT]` on any device row to open the inject form.
 | `/flags` | `uint16 LE` CI-V bitmask | `PTT \| SPLIT` |
 | `/cw` | ASCII string | `"CQ CQ DE OK1HRA"` |
 | `/azimuth`, `/elevation`, `/s-azimuth`, `/s-elevation` | `uint16 LE` degrees | `180°` |
-| `/temp`, `/hum`, `/press`, `/rain`, `/winddir`, `/windavg`, `/windmax` | `uint16 LE` scaled | `21.35 °C` |
+| `/temp` | `int16 LE` °C × 100 | `21.35 °C` |
+| `/hum`, `/press`, `/rain`, `/winddir`, `/windavg`, `/windmax` | `uint16 LE` scaled | `61.20 %` |
 | `/pa-flags` | `uint16 LE` amplifier bitmask | `OPERATE \| FULL \| ON` |
 | `/fwd`, `/ref` | `uint16 LE` W × 10 | `850.0 W` |
 | `/swr` | `uint16 LE` SWR × 100 | `1.35`, `—`, `∞` |
 | `/band` | `uint8` metres | `20 m` |
+| `/pa-temp` | `int16 LE` °C × 100 | `58.00 °C` |
 | other | raw bytes | `0x 03 A1 FF` |
+
+`/temp` is **signed** and always has been — `monitor.py` unpacks it as `<h`, and
+an outdoor sensor below freezing is the ordinary case. It was listed with the
+unsigned weather topics above until 2026-09-08; the code was right, the table
+was not.
 
 `/flags` and `/pa-flags` are separate topics on purpose: the bit maps have
 nothing in common, and one name would have an amplifier in OPERATE labelled as
-a transceiver in SPLIT.
+a transceiver in SPLIT. `/pa-temp` is separate from `/temp` for exactly the same
+reason — same encoding, different thing measured, and a monitor that showed a
+heatsink at 58 °C as the weather would be that mistake a second time.
 
 ---
 

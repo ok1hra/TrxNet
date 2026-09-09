@@ -258,10 +258,19 @@ canonical set is summarised here with its direction:
 | `/ref`      | pub | uint16    | reflected power, W × 10 (instantaneous) |
 | `/swr`      | pub | uint16    | SWR × 100; `0` = unknown, `65535` = infinite |
 | `/band`     | pub | uint8     | band in metres: 160, 80, 40, 30, 20, 17, 15, 12, 10, 6 |
+| `/pa-temp`  | pub | int16     | amplifier temperature, °C × 100 — same encoding as `/temp`, separate topic |
 | `/s-on`     | sub | uint8     | 0/1 — mains / standby of a whole device |
 | `/s-operate`| sub | uint8     | 0 = STANDBY, 1 = OPERATE |
 | `/s-full`   | sub | uint8     | 0 = half power, 1 = full power |
 | `/s-tune`   | sub | uint8     | 1 = start tuning (momentary; 0 is a no-op) |
+
+`/pa-temp` is deliberately not `/temp`. The encoding is identical — one shape
+for a temperature whatever measures it — but `/temp` is the WX node's outdoor
+reading, and a subscriber or monitor that met both under one name would report
+an amplifier heatsink as the weather. Same reasoning as `/flags` vs `/pa-flags`
+below. The publisher converts: the SPE amplifier reports whole degrees in
+either °C or °F (Rev. 2.0 `FLAGS` bit 7 selects; Rev. 1.0 does not say, and °C
+is assumed), and what goes on the wire is always °C × 100.
 
 `/pa-flags` carries the amplifier's state. Its low byte is the amplifier's own
 FLAGS byte, passed through unchanged, so a reading can be checked against the
@@ -459,7 +468,7 @@ so priority prefixes matter most there). All others are ESP32 (`= 24`).
 | **WX**  | ESP32 | publisher-only | 7 WX topics | — | on | *(hidden)* | `INK` | — |
 | **INK** | ESP32 | subscriber-only | — | up to 8 arbitrary `/x` paths (dynamic) | *(hidden)* | on | type of mirrored source (`WX`/`ROT`/…) | — |
 | **ANT** | ESP32 | sub + commander | — | `/hz`, `/gpio` | *(hidden)* | on | `OI3 705` | `trxnetDinName` → DIN `/s-gpio` |
-| **PA** | Linux/Python | pub + sub | `/pa-flags`, `/fwd`, `/ref`, `/swr`, `/band` | `/hz`, `/s-on`, `/s-operate`, `/s-full`, `/s-tune` | on | **off** | `705 OI3` | — |
+| **PA** | Linux/Python | pub + sub | `/pa-flags`, `/fwd`, `/ref`, `/swr`, `/band`, `/pa-temp` | `/hz`, `/s-on`, `/s-operate`, `/s-full`, `/s-tune` | on | **off** | `705 OI3` | — |
 
 Notes:
 - **INK** is the generalised subscriber: it maps N configured topic paths to

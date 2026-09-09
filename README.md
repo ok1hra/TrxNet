@@ -123,7 +123,10 @@ typedef void (*TrxNetCallback)(const char* from, const uint8_t* data, size_t len
 | `cb`      | Function called when a message arrives on this path. |
 
 - Registering the same path twice replaces the callback.
-- Up to `TRXNET_MAX_SUBS` (default 16) subscriptions.
+- Up to `TRXNET_MAX_SUBS` subscriptions — **16** on ESP32/ESP8266, **8** on
+  AVR (see [Configuration](#configuration)). A path that does not fit is
+  dropped **silently**: the callback simply never fires, with no error
+  anywhere. Count the paths a device registers before assuming they all took.
 - The callback is called **synchronously inside `loop()`** — keep it short. No `delay()`, no blocking I/O.
 
 ---
@@ -543,7 +546,7 @@ void onCW(const char* from, const uint8_t* data, size_t len) {
 
 ### Per-board defaults
 
-The three RAM-scaling limits default **per board** by SRAM class, so the same
+The four RAM-scaling limits default **per board** by SRAM class, so the same
 library sees the whole network on a big MCU and only what fits on a small one.
 Each board flashes its own binary, so this compile-time selection is exactly a
 "limit per processor" — no runtime cost. Defaults (auto-selected in `TrxNet.h`):
@@ -553,6 +556,15 @@ Each board flashes its own binary, so this compile-time selection is exactly a
 | `TRXNET_MAX_PEERS`   | 24 | 8 | 4 |
 | `TRXNET_MAX_PENDING` | 24 | 8 | 4 |
 | `TRXNET_MAX_SEEN`    | 48 | 16 | 8 |
+| `TRXNET_MAX_SUBS`    | 16 | 8 | 8 |
+
+`TRXNET_MAX_SUBS` is the only one of the four that costs nothing on the wire —
+`subscribe()` is a local callback table, not a protocol message — so it is sized
+by what a device actually listens to. An ESP32 interface can carry a radio's
+topics and a linear amplifier's six at once; an AVR keyer needs three. The AVR
+figure is deliberately **not** lowered below 8 as the other three are: an
+over-full table drops subscriptions silently, so shrinking it would break
+existing sketches with no diagnostic at all.
 
 `TRXNET_MAX_PEERS` is the "how much of the network do I see" knob. A peer that
 does not fit is dropped — unless it matches a prefix registered with
@@ -561,7 +573,7 @@ which evicts the stalest non-priority peer instead. So a strong node sees
 everyone and a weak node keeps the essentials.
 
 RAM cost per extra slot on AVR: `TrxPeer` ~43 B, `Pending` ~130 B (the expensive
-one), `SeenMsg` ~6 B. `TRXNET_MAX_PENDING` need not scale with peer count — size
+one), `SeenMsg` ~6 B, `Sub` ~35 B (`TRXNET_MAX_TOPIC_LEN` + a pointer + a flag). `TRXNET_MAX_PENDING` need not scale with peer count — size
 it to the app's worst-case CON burst (see `onPeerAdded` greet pattern above),
 not blindly to `TRXNET_MAX_PEERS`.
 

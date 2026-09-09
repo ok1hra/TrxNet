@@ -165,6 +165,13 @@ def decode_payload(topic: str, data: bytes) -> str:
             return "—" if raw == 0 else "∞" if raw == 0xFFFF else f"{raw / 100:.2f}"
         if topic == "/band":
             return f"{data[0]} m"
+        # Same shape as the WX station's /temp, deliberately: one encoding for
+        # temperature whatever publishes it. A separate topic, though -- /temp
+        # is the weather node's outdoor reading, and an amplifier heatsink
+        # labelled as the weather would be the /flags vs /pa-flags mistake all
+        # over again.
+        if topic == "/pa-temp":
+            return f"{struct.unpack_from('<h', data)[0] / 100:.2f} °C"
         if topic in ("/s-on", "/s-operate", "/s-full", "/s-tune"):
             return "1" if data[0] else "0"
     except Exception:

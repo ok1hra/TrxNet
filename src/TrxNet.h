@@ -23,8 +23,13 @@
 // any single value to take full control.
 
 // ============================================================================
-// ABI WARNING — TRXNET_MAX_PEERS and TRXNET_MAX_PENDING size members of class
-// TrxNet, so they change sizeof(TrxNet). Override them ONLY via a global build
+// ABI WARNING — TRXNET_MAX_PEERS, TRXNET_MAX_PENDING, TRXNET_MAX_SUBS,
+// TRXNET_MAX_SEEN, TRXNET_MAX_DEVICE_NAME, TRXNET_MAX_TOPIC_LEN and
+// TRXNET_MAX_PAYLOAD all size members of class TrxNet, so they change
+// sizeof(TrxNet). (This warning used to name only the first two, which was
+// never the whole list — _subs[TRXNET_MAX_SUBS] and _seen[TRXNET_MAX_SEEN] are
+// members just as much as _peers[] is, and the buffer lengths size the structs
+// inside them.) Override them ONLY via a global build
 // flag (e.g. -DTRXNET_MAX_PENDING=6 in platform/compiler options), which applies
 // to every translation unit. NEVER `#define` them in a .ino/.cpp before including
 // this header: TrxNet.cpp is compiled separately with the defaults, so the class
@@ -47,8 +52,25 @@
     #define TRXNET_MAX_PEERS    4
   #endif
 #endif
+// Max local subscriptions. Nothing about this goes on the wire — subscribe() is
+// a callback table, not a protocol message — so raising it on one device costs
+// only that device's RAM (one slot = TRXNET_MAX_TOPIC_LEN + a pointer + a flag,
+// ~40 B on ESP32, ~35 B on AVR). Per board like the three limits above and
+// below it, because the pressure is not the same: an ESP32 interface subscribes
+// to a radio's topics AND a linear amplifier's six, while an AVR keyer needs
+// three and cannot spare half a kB for slots it will never fill.
+//
+// A subscription that does not fit is dropped SILENTLY (see subscribe()), so a
+// device that has outgrown its table does not fail loudly — its callback simply
+// never fires. Count the paths before lowering this.
+// NB: sizes class TrxNet — set via build flag only, never #define in a sketch.
+// See the ABI WARNING above TRXNET_MAX_PEERS.
 #ifndef TRXNET_MAX_SUBS
-#define TRXNET_MAX_SUBS          8
+  #if   defined(ESP32) || defined(ESP8266)
+    #define TRXNET_MAX_SUBS   16
+  #else
+    #define TRXNET_MAX_SUBS    8
+  #endif
 #endif
 #ifndef TRXNET_MAX_DEVICE_NAME
 #define TRXNET_MAX_DEVICE_NAME   32   // including null terminator
