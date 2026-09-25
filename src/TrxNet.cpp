@@ -31,7 +31,7 @@ namespace trxnet_detail {
 // ========================================================================
 TrxNet::TrxNet(UDP& udp, uint16_t port)
     : _udp(udp), _port(port), _lastAnnounce(0), _msgId(1), _seenIdx(0),
-      _onPeerAdded(NULL), _prio(NULL), _prioCount(0)
+      _onPeerAdded(NULL), _onAnyTopic(NULL), _prio(NULL), _prioCount(0)
 {
     _name[0] = '\0';
     memset(_peers,   0, sizeof(_peers));
@@ -178,6 +178,10 @@ bool TrxNet::publishTo(const char* peerName, const char* path,
 
 void TrxNet::setPort(uint16_t port) {
     _port = port;
+}
+
+void TrxNet::onAnyTopic(TrxTopicCallback cb) {
+    _onAnyTopic = cb;
 }
 
 void TrxNet::onPeerAdded(TrxPeerCallback cb) {
@@ -542,6 +546,11 @@ void TrxNet::_processCoAP(IPAddress src, uint16_t srcPort,
             break;
         }
     }
+
+    // The catch-all observer runs first and unconditionally: it exists to see topics
+    // nothing is subscribed to, which is the only way a node can learn what the rest
+    // of the network publishes.
+    if (_onAnyTopic) _onAnyTopic(fromName, path, payload, payloadLen);
 
     // Dispatch to all matching subscriptions
     for (int i = 0; i < TRXNET_MAX_SUBS; i++) {

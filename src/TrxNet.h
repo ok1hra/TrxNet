@@ -4,7 +4,7 @@
 
 // ---------- library version ----------
 // Bump on any API change. Apps may compile-check with #if TRXNET_VERSION >= ...
-#define TRXNET_VERSION 0x0106   // 1.06 — isPriorityPeer() + parsePriorityPrefixes() helper (additive, wire-compatible)
+#define TRXNET_VERSION 0x0107   // 1.07 — onAnyTopic() catch-all observer (additive, wire-compatible)
 
 // ---------- tuneable limits ----------
 // All values can be overridden by defining them before including this header.
@@ -150,6 +150,18 @@ struct TrxPeer {
 
 typedef void (*TrxNetCallback)(const char* from, const uint8_t* data, size_t len);
 
+// Fired for EVERY topic that arrives, before the subscribe() table is consulted and
+// regardless of whether anything is subscribed to that path. publish() sends a unicast
+// copy to every active peer, so this sees the whole network's traffic without spending
+// a single _subs slot — which is what makes topic DISCOVERY possible at all (there is
+// no subscribe packet on the wire, and dispatch is exact strcmp with no wildcards).
+// The observer must not publish from inside the callback. `path` and `data` point into
+// the receive buffer and are valid only for the duration of the call — copy what you
+// keep. Only one slot; registering again replaces it, NULL clears it. Set it AGAIN
+// after any re-begin(), exactly like subscriptions, which a re-begin also drops.
+typedef void (*TrxTopicCallback)(const char* from, const char* path,
+                                 const uint8_t* data, size_t len);
+
 // Fired once when a new peer is discovered (first announce or first probe reply).
 // NOT fired for known peers that simply refresh their lastSeen via a repeat announce.
 // Fired again if the same peer is removed by timeout and later rejoins.
@@ -222,6 +234,10 @@ public:
     // notes above. Passing NULL clears the callback. Only one slot — registering
     // again replaces the previous callback.
     void onPeerAdded(TrxPeerCallback cb);
+
+    // Register a catch-all observer fired for every arriving topic. See the
+    // TrxTopicCallback notes above. Passing NULL clears it. Only one slot.
+    void onAnyTopic(TrxTopicCallback cb);
 
     // Protect high-value devices when the peer table (TRXNET_MAX_PEERS) is full.
     // `prefixes` is a caller-owned array of `count` name-prefix strings, matched
@@ -304,7 +320,8 @@ private:
     SeenMsg  _seen[TRXNET_MAX_SEEN];
     uint8_t  _seenIdx;
 
-    TrxPeerCallback _onPeerAdded;
+    TrxPeerCallback  _onPeerAdded;
+    TrxTopicCallback _onAnyTopic;
 
     const char* const* _prio;        // caller-owned array of priority name prefixes
     uint8_t            _prioCount;

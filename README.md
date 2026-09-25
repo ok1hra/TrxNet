@@ -266,6 +266,49 @@ sketch and library produces a silent C++ ODR violation (or, with stricter
 compilers, a build failure). PlatformIO `build_flags` are the only portable
 way to override these values from outside the library.
 
+
+---
+
+### `void onAnyTopic(TrxTopicCallback cb)`
+
+Register a **catch-all observer** fired for every topic that arrives, *before* the
+`subscribe()` table is consulted and regardless of whether anything is subscribed
+to that path. Passing `NULL` clears it. Only one slot — registering again replaces
+the previous callback.
+
+```cpp
+typedef void (*TrxTopicCallback)(const char* from, const char* path,
+                                 const uint8_t* data, size_t len);
+```
+
+This is what makes **topic discovery** possible. There is no subscribe packet on
+the wire and dispatch is an exact `strcmp` with no wildcards, so a node cannot ask
+a peer what it publishes. But `publish()` sends a unicast copy to **every** active
+peer, which means every node already receives the whole network's traffic — the
+local dispatch is simply where most of it is thrown away. This hook taps the packet
+path ahead of that, and costs **no `_subs` slot**, which matters on a table of 16
+(8 on AVR) that a real device has usually half filled already.
+
+```cpp
+void onTopicSeen(const char* from, const char* path,
+                 const uint8_t* data, size_t len) {
+    // Copy what you keep: path and data point into the receive buffer and are
+    // valid only for this call.
+    Serial.print(from); Serial.print(' '); Serial.println(path);
+}
+
+net.onAnyTopic(onTopicSeen);
+```
+
+Rules:
+
+- **Do not publish from inside it.** Same constraint the subscribe callbacks carry
+  — it runs in the middle of the packet-handling path.
+- `from` is empty for a sender not yet in the peer table. Decide deliberately what
+  to do with such a packet; wifilt drops it rather than filing it under no name.
+- **Set it again after any re-`begin()`**, exactly like subscriptions, which a
+  re-`begin()` also drops.
+
 ---
 
 ### `void setPriorityPrefixes(const char* const* prefixes, uint8_t count)`
@@ -325,7 +368,7 @@ if (NET_ID != 0x00) {
 
 | Type prefix | Example name | Description |
 |-------------|-------------|-------------|
-| `705` | `705.01` | IC-705 Interface — publishes `/freq`, `/mode`, `/flags`; subscribes `/s-hz`, `/s-mode` |
+| `705` | `705.01` | IC-705 Interface — publishes `/freq`, `/mode`, `/flags`; subscribes `/s-hz`, `/s-mode`. On request publishes RTTY text `/rtty1`, `/rtty2`, `/rtty-tx` to peers that subscribe with `/s-rtty` ([INTEGRATION.md §7.1](INTEGRATION.md)) |
 | `OI3` | `OI3.ff` | k3ng CW keyer — publishes `/cw`; subscribes `/s-cw` |
 | `ROT` | `ROT.01` | IP-rotator — publishes `/azimuth`, `/elevation`; subscribes `/s-azimuth`, `/s-elevation` |
 | `DIN` | `DIN.01` | ETH DIN rail dev kit — subscribes `/s-gpio` (set 8 outputs); publishes `/gpio` (current output state) |

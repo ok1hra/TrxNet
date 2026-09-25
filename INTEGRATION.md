@@ -263,6 +263,9 @@ canonical set is summarised here with its direction:
 | `/s-operate`| sub | uint8     | 0 = STANDBY, 1 = OPERATE |
 | `/s-full`   | sub | uint8     | 0 = half power, 1 = full power |
 | `/s-tune`   | sub | uint8     | 1 = start tuning (momentary; 0 is a no-op) |
+| `/rtty1` `/rtty2` | pub | uint8 + char[] | RTTY decoder 1 / 2 text: `[seq][ASCII 1–63 B]`, `TRX_NON`, only to subscribers (§7.1) |
+| `/rtty-tx`  | pub | uint8 + char[] | RTTY transmitted text, `[seq][ASCII 1–63 B]` at TX start; `[seq][0x00]` = TX aborted (§7.1) |
+| `/s-rtty`   | sub | uint8     | 1 = subscribe to / renew the three RTTY topics, 0 = unsubscribe (§7.1) |
 
 `/pa-temp` is deliberately not `/temp`. The encoding is identical — one shape
 for a temperature whatever measures it — but `/temp` is the WX node's outdoor
@@ -292,6 +295,31 @@ here before use across devices.
 `TRX_CON` (retransmit-until-ACK) MUST be used for text/command payloads that must
 not be lost (`/s-cw`, greeting snapshots). `TRX_NON` (fire-and-forget) SHOULD be
 used for periodic telemetry where the next update supersedes a lost one.
+
+### 7.1 RTTY text stream — `/rtty1` `/rtty2` `/rtty-tx` (`705`, since FW 20260925)
+
+The interface publishes the text of both its RTTY decoders and every RTTY
+transmission for analysis on another device. Off by default (DATA → RTTY-ICOM →
+SETTINGS → *TrxNet text stream*), and even when on it is **not** broadcast:
+
+- A listener sends `/s-rtty` = `1` to the interface (`publishTo` by name, or
+  `publish`), and repeats it every 30 s. The subscription lapses 90 s after the
+  last one; `0` ends it at once. At most 4 listeners; a fifth is refused.
+- The interface resolves the sender by IP from its peer table, so the listener
+  must be a discovered peer first (announce like any node).
+- Packets go to each listener with `publishTo(..., TRX_NON)`. **Not** CON: `/s-cw`
+  and `/s-lptune` share the one pending queue, and a listener gone without
+  unsubscribing would fill it with retransmits for the whole lease.
+- Payload `[seq uint8][ASCII]`; `seq` counts per topic and wraps. A skipped
+  number is a lost packet or characters the interface dropped. No terminator,
+  no NUL inside text; on `/rtty-tx` a payload of `[seq][0x00]` alone means the
+  transmission was aborted (by the operator or a fault) and the rest did not go
+  out. For an external FSK keyer it means "abort was requested".
+- `/rtty1` / `/rtty2` carry exactly what the decoders hand the RX tape,
+  including `\r` `\n`, after whatever squelch the decoding page applies (the
+  QRPlog palette runs without one, so noise comes through too).
+
+A reference listener is `tools/rtty-stream-listen.py` in the wifilt repository.
 
 ---
 
@@ -451,6 +479,38 @@ future version bump splits the network. If the wire format ever must change,
 accept a **compatible range** of versions and make new fields **trailing/optional**
 so old parsers ignore rather than drop them. Out of scope for these extensions
 (they leave the wire untouched), but noted here as the migration rule.
+
+---
+
+## 10a. Library extensions (shipped in v1.07)
+
+One **additive** member in **v1.07** (`TRXNET_VERSION >= 0x0107`), wire format
+untouched:
+
+**`void TrxNet::onAnyTopic(TrxTopicCallback cb)`** — a catch-all observer fired for
+every arriving topic before the subscribe table is consulted, and regardless of
+whether anything is subscribed to that path.
+
+```cpp
+typedef void (*TrxTopicCallback)(const char* from, const char* path,
+                                 const uint8_t* data, size_t len);
+```
+
+Rationale: §6 makes `subscribe()` a purely local callback table, so nothing on the
+wire announces what a device publishes and a node MUST NOT be expected to discover
+topics by asking. But `publish()` unicasts a copy to every active peer, so every
+node already **receives** the whole network's traffic. This hook exposes that
+without spending a `_subs` slot — the enabling piece for a device that has to
+present the network's topics to an operator (wifilt's JS8 TELEMETRY panel) rather
+than consume a fixed, known set.
+
+Callers MUST NOT publish from inside the callback, MUST copy `path`/`data` if they
+keep them (both point into the receive buffer), and MUST re-register after any
+re-`begin()` — which drops it exactly as it drops subscriptions.
+
+A consumer that stores what it observes SHOULD filter `/s-*` set-points out: by §6
+those are an order aimed at another device, not a reading the observing node owns,
+and beaconing or logging them as local state misreports the network.
 
 ---
 
