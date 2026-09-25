@@ -374,6 +374,7 @@ if (NET_ID != 0x00) {
 | `DIN` | `DIN.01` | ETH DIN rail dev kit — subscribes `/s-gpio` (set 8 outputs); publishes `/gpio` (current output state) |
 | `WX` | `WX.01` | ESP32-POE weather station — publishes `/temp`, `/hum`, `/press`, `/rain`, `/winddir`, `/windavg`, `/windmax` (publish-only) |
 | `PA` | `PA.01` | EXPERT 1K-FA linear amplifier — publishes `/pa-flags`, `/fwd`, `/ref`, `/swr`, `/band`; subscribes `/hz`, `/s-on`, `/s-operate`, `/s-full`, `/s-tune`. A Python peer, not firmware: the amplifier's serial protocol is spoken by a daemon on a Linux box |
+| `RTY` | `RTY.01` | RTTY text-stream listener / recorder (wifilt `tools/rtty-stream-listen.py`, `rtty-stream-record.py`) — subscribes `/s-rtty`, receives `/rtty1`, `/rtty2`, `/rtty-tx` from a `705`. A Python peer |
 
 Device type prefixes are arbitrary strings — the library does not interpret them. The table above documents the convention used across the remoteQTH device family.
 

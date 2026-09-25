@@ -61,6 +61,7 @@ name = "<TYPE>.<NET_ID as 2-digit lowercase hex>"     e.g.  705.01, OI3.ff, ROT.
 | `INK` | e-ink telemetry display             |
 | `ANT` | AntHub-NET antenna matrix           |
 | `PA`  | EXPERT 1K-FA linear amplifier       |
+| `RTY` | RTTY text-stream listener / recorder (Python, wifilt `tools/`) |
 
 New types MUST NOT collide on their first 4 characters with an existing type
 (priority prefixes match on ≤4 chars — see §5).
@@ -306,7 +307,9 @@ SETTINGS → *TrxNet text stream*), and even when on it is **not** broadcast:
   `publish`), and repeats it every 30 s. The subscription lapses 90 s after the
   last one; `0` ends it at once. At most 4 listeners; a fifth is refused.
 - The interface resolves the sender by IP from its peer table, so the listener
-  must be a discovered peer first (announce like any node).
+  must be a discovered peer first (announce like any node) -- and there can be
+  only one listener per IP address: a second one on the same host is taken for
+  the first, renews its subscription and receives nothing.
 - Packets go to each listener with `publishTo(..., TRX_NON)`. **Not** CON: `/s-cw`
   and `/s-lptune` share the one pending queue, and a listener gone without
   unsubscribing would fill it with retransmits for the whole lease.
@@ -319,7 +322,13 @@ SETTINGS → *TrxNet text stream*), and even when on it is **not** broadcast:
   including `\r` `\n`, after whatever squelch the decoding page applies (the
   QRPlog palette runs without one, so noise comes through too).
 
-A reference listener is `tools/rtty-stream-listen.py` in the wifilt repository.
+A listener takes type `RTY` (§2). The interface should list `RTY` in its
+priority prefixes (§5): the stream goes to a listener by name, so one evicted
+from a full peer table stays subscribed and receives nothing.
+
+A reference listener is `tools/rtty-stream-listen.py` (`RTY.fe`) in the wifilt
+repository; `tools/rtty-stream-record.py` (`RTY.01`) records `/rtty1` and
+`/rtty2` to two files per day for analysis.
 
 ---
 
