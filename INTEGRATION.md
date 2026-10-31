@@ -255,7 +255,7 @@ canonical set is summarised here with its direction:
 | `/s-mode`   | sub | uint8     | commanded CI-V mode                   |
 | `/s-azimuth`/`/s-elevation` | sub | uint16 | commanded degrees          |
 | `/s-gpio`   | sub | uint8     | commanded 8-bit output map            |
-| `/s-cw`     | sub | char[]    | CW/text, `TRX_CON`; single `0xFF` byte = "stop sending" (what `705` sends and OI3 acts on; earlier drafts said `0x00`/`0x03`) |
+| `/s-cw`     | sub | char[]    | CW/text, `TRX_CON`; single byte `0xFF` (what `705` sends) or `0x03` = "stop sending" — OI3 acts on both; an earlier draft said `0x00` |
 | `/s-ptt`    | sub | uint8     | 1 = key / renew the PTT lease, 0 = unkey now — `TRX_NON` only (§7.3) |
 | `/ptt`      | pub | uint8     | 0/1 — PTT state of the `/s-ptt` lease, to the commanding peer (§7.3) |
 | `/pa-flags` | pub | uint16    | amplifier state, bit map below |
@@ -630,7 +630,7 @@ so priority prefixes matter most there). All others are ESP32 (`= 24`).
 | Device | Platform | Role | Publishes | Subscribes | `publish_enable` default | `subscribe_enable` default | Priority default | Target bindings |
 |--------|----------|------|-----------|------------|--------------------------|----------------------------|------------------|-----------------|
 | **705** | ESP32 | pub + sub + commander | `/hz` | `/hz`, `/mode`, `/s-hz` | on | on | `OI3 ANT` | `TRX2/3_NET_ID` → OI3 `/s-cw`,`/s-hz` |
-| **OI3** | ATmega2560 | pub + sub | `/hz`, `/mode` | `/s-hz`, `/s-mode`, `/s-cw` | on | on | `705 ANT ROT` | — |
+| **OI3** | ATmega2560 | pub + sub | `/hz`, `/mode`, `/lptune`, `/ptt` | `/s-hz`, `/s-mode`, `/s-cw`, `/s-lptune`, `/s-ptt` | on | on | `705 ANT ROT` | — |
 | **ROT** | ESP32 | pub + optional sub | `/azimuth`, `/elevation` | `/s-azimuth`, `/s-elevation` | on | **off** (legacy `TrxNetSubEnabled`) | `INK 705` | — |
 | **DIN** | ESP32 | sub + echo | `/gpio` (outputs + applied input) | `/s-gpio`, or one picked peer topic (SETUP-4) | on (echo) | on | `ANT` (+ source type auto-added) | — |
 | **WX**  | ESP32 | publisher-only | 7 WX topics | — | on | *(hidden)* | `INK` | — |
