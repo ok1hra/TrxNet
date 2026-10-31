@@ -620,6 +620,29 @@ but only learns peers on 1.08+ (an older peer answers its PROBE at the wrong
 port). `sizeof(TrxNet)` grew (one `uint16_t`, plus one per `TRXNET_MAX_SEEN` entry); the ABI guard (§10.1 B) catches
 a stale object.
 
+## 10c. Library extensions (shipped in v1.09)
+
+One **additive** member in **v1.09** (`TRXNET_VERSION >= 0x0109`); no wire change:
+
+**`void TrxNet::onNameConflict(TrxConflictCallback cb)`**, with
+`void cb(const char* name, IPAddress ip, IPAddress otherIp)`, reports one device
+name (§2) announced from two places. That is two devices set to the same NET_ID.
+The peer table keys on the name and follows whichever announced last, so
+without this the only symptom is messages reaching the wrong device.
+
+- **Another peer:** its announces return to an address it left less than
+  `TRXNET_PEER_TIMEOUT_MS` ago (A → B → A). `ip` is the address heard now,
+  `otherIp` the other one. A device that only moved (new DHCP lease) changes
+  once and never fires.
+- **This node's own name:** `ip` is the sender and `otherIp` is `0.0.0.0`. Fires
+  for every such announce, including the node's own broadcast where the stack
+  loops it back (Linux does). The app must drop its own addresses.
+
+The callback runs inside `loop()`, under the same rules as `onPeerAdded`, so do
+not send from it. Every `TrxPeer` gains `prevIp` + `ipChangedAt`, which grows
+`sizeof(TrxNet)`; the ABI guard (§10.1 B) catches a stale object. wifilt shows the
+conflict in SETUP → TrxNet.
+
 ---
 
 ## 11. Per-device profiles

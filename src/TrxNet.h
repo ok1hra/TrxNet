@@ -4,7 +4,7 @@
 
 // ---------- library version ----------
 // Bump on any API change. Apps may compile-check with #if TRXNET_VERSION >= ...
-#define TRXNET_VERSION 0x0108   // 1.08 — setDiscoveryPort() + probe(): a node may listen off the network port (wire-compatible)
+#define TRXNET_VERSION 0x0109   // 1.09 — onNameConflict(): two devices announcing one name (wire-compatible)
 
 // ---------- tuneable limits ----------
 // All values can be overridden by defining them before including this header.
@@ -146,6 +146,8 @@ struct TrxPeer {
     uint16_t  port;
     uint32_t  lastSeen;
     bool      active;
+    IPAddress prevIp;        // since 1.09: the address this name announced from before ip
+    uint32_t  ipChangedAt;   // millis() of that change -- see onNameConflict()
 };
 
 typedef void (*TrxNetCallback)(const char* from, const uint8_t* data, size_t len);
@@ -174,6 +176,21 @@ typedef void (*TrxTopicCallback)(const char* from, const char* path,
 // avoid calling publish/publishTo directly from here. Defer the work to the main
 // loop (e.g. set a flag, queue the peer name) to stay clear of UDP re-entrancy.
 typedef void (*TrxPeerCallback)(const TrxPeer* peer);
+
+// Since 1.09. Fired when the network carries one device name from two places.
+// Names must be unique, but nothing stops two devices from being set to the same
+// NET_ID, and the peer table keys on the name: it just follows whichever device
+// announced last, so the conflict is otherwise invisible. Two cases:
+//   - another peer: its announces came back to an address it left less than
+//     TRXNET_PEER_TIMEOUT_MS ago (A -> B -> A), i.e. both are still announcing.
+//     `ip` is where it was heard now, `otherIp` the other address. A device that
+//     merely moved (new DHCP lease) changes once and never fires this.
+//   - THIS node's own name: `ip` is the sender, `otherIp` is 0.0.0.0. Fires for
+//     every such announce, and that includes this node's own broadcast where the
+//     stack loops it back (Linux does, from the node's own address) -- the app
+//     must ignore its own addresses.
+// Runs inside loop(); same rules as TrxPeerCallback (do not send from it).
+typedef void (*TrxConflictCallback)(const char* name, IPAddress ip, IPAddress otherIp);
 
 // ---------- ABI guard ----------
 // abi_tag<N> is only *declared* here and *explicitly instantiated* in TrxNet.cpp
@@ -256,6 +273,10 @@ public:
     // Register a catch-all observer fired for every arriving topic. See the
     // TrxTopicCallback notes above. Passing NULL clears it. Only one slot.
     void onAnyTopic(TrxTopicCallback cb);
+
+    // Since 1.09. Register the duplicate-name observer -- see TrxConflictCallback.
+    // Passing NULL clears it. Only one slot.
+    void onNameConflict(TrxConflictCallback cb);
 
     // Protect high-value devices when the peer table (TRXNET_MAX_PEERS) is full.
     // `prefixes` is a caller-owned array of `count` name-prefix strings, matched
@@ -343,6 +364,7 @@ private:
 
     TrxPeerCallback  _onPeerAdded;
     TrxTopicCallback _onAnyTopic;
+    TrxConflictCallback _onNameConflict;
 
     const char* const* _prio;        // caller-owned array of priority name prefixes
     uint8_t            _prioCount;

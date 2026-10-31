@@ -269,6 +269,26 @@ way to override these values from outside the library.
 
 ---
 
+### `void onNameConflict(TrxConflictCallback cb)` *(since 1.09)*
+
+Reports one device name heard from two addresses, which means two devices were
+set to the same NET_ID. The peer table keys on the name and follows whichever
+device announced last, so the conflict is otherwise invisible.
+
+```cpp
+typedef void (*TrxConflictCallback)(const char* name, IPAddress ip, IPAddress otherIp);
+```
+
+- Another peer whose announces return to an address it left less than
+  `TRXNET_PEER_TIMEOUT_MS` ago: `ip` is the address heard now, `otherIp` the
+  other one. A one-off move (new DHCP lease) does not fire.
+- This node's own name: `otherIp` is `0.0.0.0`. This includes the node's own
+  looped-back broadcast (Linux), so drop your own address.
+
+Runs inside `loop()`; do not send from it. Details are in INTEGRATION.md §10c.
+
+---
+
 ### `void onAnyTopic(TrxTopicCallback cb)`
 
 Register a **catch-all observer** fired for every topic that arrives, *before* the

@@ -31,7 +31,7 @@ namespace trxnet_detail {
 // ========================================================================
 TrxNet::TrxNet(UDP& udp, uint16_t port)
     : _udp(udp), _port(port), _discPort(port), _lastAnnounce(0), _msgId(1), _seenIdx(0),
-      _onPeerAdded(NULL), _onAnyTopic(NULL), _prio(NULL), _prioCount(0)
+      _onPeerAdded(NULL), _onAnyTopic(NULL), _onNameConflict(NULL), _prio(NULL), _prioCount(0)
 {
     _name[0] = '\0';
     memset(_peers,   0, sizeof(_peers));
@@ -204,6 +204,10 @@ void TrxNet::onPeerAdded(TrxPeerCallback cb) {
     _onPeerAdded = cb;
 }
 
+void TrxNet::onNameConflict(TrxConflictCallback cb) {
+    _onNameConflict = cb;
+}
+
 void TrxNet::setPriorityPrefixes(const char* const* prefixes, uint8_t count) {
     _prio      = prefixes;
     _prioCount = prefixes ? count : 0;
@@ -311,7 +315,12 @@ void TrxNet::_processDiscovery(IPAddress src, const uint8_t* buf, size_t len) {
     memcpy(name, &buf[4], copyLen);
     name[copyLen] = '\0';
 
-    if (strcmp(name, _name) == 0) return;
+    if (strcmp(name, _name) == 0) {
+        // Our own name: our own looped-back broadcast, or a second device set to
+        // the same NET_ID. Only the app knows its own addresses, so it sorts that out.
+        if (_onNameConflict) _onNameConflict(name, src, IPAddress(0, 0, 0, 0));
+        return;
+    }
 
     uint16_t port = ((uint16_t)buf[4 + nameLen] << 8) | buf[4 + nameLen + 1];
 
@@ -626,6 +635,16 @@ void TrxNet::_checkTimeouts() {
 TrxPeer* TrxNet::_findOrAddPeer(const char* name, IPAddress ip, uint16_t port) {
     for (int i = 0; i < TRXNET_MAX_PEERS; i++) {
         if (_peers[i].active && strcmp(_peers[i].name, name) == 0) {
+            if (!(_peers[i].ip == ip)) {
+                // Back to the address it just left, while that one was still
+                // announcing: two devices carry this name (see onNameConflict()).
+                uint32_t now = millis();
+                if (_onNameConflict && _peers[i].prevIp == ip &&
+                    now - _peers[i].ipChangedAt < TRXNET_PEER_TIMEOUT_MS)
+                    _onNameConflict(name, ip, _peers[i].ip);
+                _peers[i].prevIp      = _peers[i].ip;
+                _peers[i].ipChangedAt = now;
+            }
             _peers[i].ip       = ip;
             _peers[i].port     = port;
             _peers[i].lastSeen = millis();
@@ -640,6 +659,7 @@ TrxPeer* TrxNet::_findOrAddPeer(const char* name, IPAddress ip, uint16_t port) {
             _peers[i].port     = port;
             _peers[i].lastSeen = millis();
             _peers[i].active   = true;
+            _peers[i].prevIp   = IPAddress(0, 0, 0, 0);
             if (_onPeerAdded) _onPeerAdded(&_peers[i]);
             return &_peers[i];
         }
@@ -666,6 +686,7 @@ TrxPeer* TrxNet::_findOrAddPeer(const char* name, IPAddress ip, uint16_t port) {
             _peers[victim].port     = port;
             _peers[victim].lastSeen = millis();
             _peers[victim].active   = true;
+            _peers[victim].prevIp   = IPAddress(0, 0, 0, 0);
             if (_onPeerAdded) _onPeerAdded(&_peers[victim]);
             return &_peers[victim];
         }
