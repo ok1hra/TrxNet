@@ -368,14 +368,15 @@ if (NET_ID != 0x00) {
 
 | Type prefix | Example name | Description |
 |-------------|-------------|-------------|
-| `705` | `705.01` | IC-705 Interface — publishes `/freq`, `/mode`, `/flags`; subscribes `/s-hz`, `/s-mode`. On request publishes RTTY text `/rtty1`, `/rtty2`, `/rtty-tx` to peers that subscribe with `/s-rtty` ([INTEGRATION.md §7.1](INTEGRATION.md)) |
+| `705` | `705.01` | IC-705 Interface — publishes `/freq`, `/mode`, `/flags`; subscribes `/s-hz`, `/s-mode`. On request publishes RTTY text `/rtty1`, `/rtty2`, `/rtty-tx` to peers that subscribe with `/s-rtty` ([INTEGRATION.md §7.1](INTEGRATION.md)), and JTTY `/jtty-rx`, `/jtty-tx` to peers that subscribe with `/s-jtty` ([§7.2](INTEGRATION.md)) |
 | `OI3` | `OI3.ff` | k3ng CW keyer — publishes `/hz`, `/mode`, `/ptt`; subscribes `/s-hz`, `/s-mode`, `/s-cw`, `/s-ptt` (PTT lease, [INTEGRATION.md §7.3](INTEGRATION.md)) |
 | `LTX` | `LTX.01` | local-trx (wifilt) — PC sound card for audio, rig control through a picked peer: subscribes `/hz`, `/mode`, `/ptt` from it, sends it `/s-hz`, `/s-mode`, `/s-cw`, `/s-ptt`. Listens on 5684 beside a native wifilt (`setDiscoveryPort()`, v1.08) |
 | `ROT` | `ROT.01` | IP-rotator — publishes `/azimuth`, `/elevation`; subscribes `/s-azimuth`, `/s-elevation` |
-| `DIN` | `DIN.01` | ETH DIN rail dev kit — subscribes `/s-gpio` (set 8 outputs); publishes `/gpio` (current output state) |
+| `DIN` | `DIN.01` | ETH DIN rail dev kit — subscribes `/s-gpio` (8 input bits); publishes `/gpio` (2 bytes: output state, applied input) |
 | `WX` | `WX.01` | ESP32-POE weather station — publishes `/temp`, `/hum`, `/press`, `/rain`, `/winddir`, `/windavg`, `/windmax` (publish-only) |
-| `PA` | `PA.01` | EXPERT 1K-FA linear amplifier — publishes `/pa-flags`, `/fwd`, `/ref`, `/swr`, `/band`; subscribes `/hz`, `/s-on`, `/s-operate`, `/s-full`, `/s-tune`. A Python peer, not firmware: the amplifier's serial protocol is spoken by a daemon on a Linux box |
+| `PA` | `PA.01` | EXPERT 1K-FA linear amplifier — publishes `/pa-flags`, `/fwd`, `/ref`, `/swr`, `/band`, `/pa-temp`, `/pa-src`; subscribes `/hz`, `/s-on`, `/s-operate`, `/s-full`, `/s-tune`. A Python peer, not firmware: the amplifier's serial protocol is spoken by a daemon on a Linux box |
 | `RTY` | `RTY.01` | RTTY text-stream listener / recorder (wifilt `tools/rtty-stream-listen.py`, `rtty-stream-record.py`) — subscribes `/s-rtty`, receives `/rtty1`, `/rtty2`, `/rtty-tx` from a `705`. A Python peer |
+| `JTY` | `JTY.fe` | JTTY stream listener (wifilt `tools/jtty-stream-listen.py`) — subscribes `/s-jtty`, receives `/jtty-rx`, `/jtty-tx` from a `705`. A Python peer |
 
 Device type prefixes are arbitrary strings — the library does not interpret them. The table above documents the convention used across the remoteQTH device family.
 
@@ -443,8 +444,8 @@ unknown publisher show up as undecoded rather than as plausible nonsense.
 | 1 | OPERATE (0 = STANDBY) | | 8 | ON — powered and running |
 | 2 | TX | | 9 | LINK — telemetry is arriving |
 | 3 | ALARM | | 10 | REV2 — protocol revision |
-| 4 | FULL (0 = half power) | | 11–15 | reserved, zero |
-| 5 | CONTEST | | | |
+| 4 | FULL (0 = half power) | | 11 | PINNED — `/pa-src` is fixed by configuration |
+| 5 | CONTEST | | 12–15 | reserved, zero |
 | 6 | BEEP | | | |
 
 Bit 7 is forced to zero on purpose: the amplifier uses it for `PA_PROT` in
@@ -493,6 +494,17 @@ Pin map used by the `DIN` (ETH DIN rail dev kit) device:
 | 5   | 14   |
 | 6   | 32   |
 | 7   | 33   |
+
+This is the `DIN` factory default. Its SETUP-4 web page (`:88/setup4`) can reroute
+`/s-gpio` bits to outputs through an 8×8 OR matrix with per-output inversion, so
+`/gpio` always reports the **physical output state** after routing — not an echo of
+`/s-gpio`. SETUP-4 can also replace `/s-gpio` with any topic of one chosen peer
+(discovered via `onAnyTopic()`); the first payload byte then drives the matrix.
+
+`/gpio` from `DIN` is **2 bytes**: byte 0 = output state (as above), byte 1 = the
+input byte the outputs were computed from (after SETUP-4 manual overrides). A
+controller confirms its `/s-gpio` by comparing **byte 1**; receivers that read only
+byte 0 keep working. Older `DIN` firmware sends 1 byte (outputs = input).
 
 ```cpp
 // Command outputs: turn on bit0 (GPIO0) and bit3 (GPIO12)

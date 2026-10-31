@@ -133,6 +133,7 @@ Press `[INJECT]` on any device row to open the inject form.
 | `/swr` | `uint16 LE` SWR × 100 | `1.35`, `—`, `∞` |
 | `/band` | `uint8` metres | `20 m` |
 | `/pa-temp` | `int16 LE` °C × 100 | `58.00 °C` |
+| `/pa-src` | ASCII device name | `"OI3.02"` |
 | other | raw bytes | `0x 03 A1 FF` |
 
 `/temp` is **signed** and always has been — `monitor.py` unpacks it as `<h`, and

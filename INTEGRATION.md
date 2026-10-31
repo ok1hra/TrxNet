@@ -62,6 +62,7 @@ name = "<TYPE>.<NET_ID as 2-digit lowercase hex>"     e.g.  705.01, OI3.ff, ROT.
 | `ANT` | AntHub-NET antenna matrix           |
 | `PA`  | EXPERT 1K-FA linear amplifier       |
 | `RTY` | RTTY text-stream listener / recorder (Python, wifilt `tools/`) |
+| `JTY` | JTTY stream listener (Python, wifilt `tools/`) |
 | `LTX` | local-trx — PC audio + remote rig control for wifilt (C++, wifilt `local-trx/`) |
 
 New types MUST NOT collide on their first 4 characters with an existing type
@@ -247,7 +248,7 @@ canonical set is summarised here with its direction:
 | `/flags`    | pub | uint16    | bitfield                              |
 | `/azimuth`  | pub | uint16    | degrees                               |
 | `/elevation`| pub | uint16    | degrees                               |
-| `/gpio`     | pub | uint8     | 8-bit output map (state echo)         |
+| `/gpio`     | pub | uint8[2]  | DIN: [output map, applied input]; confirm on byte 1 (old DIN: 1 byte) |
 | `/temp`     | pub | int16     | °C × 100                              |
 | `/hum` `/press` `/rain` `/winddir` `/windavg` `/windmax` | pub | uint16 | scaled ints (see README WX table) |
 | `/s-hz`     | sub | uint32    | commanded frequency                   |
@@ -263,6 +264,7 @@ canonical set is summarised here with its direction:
 | `/swr`      | pub | uint16    | SWR × 100; `0` = unknown, `65535` = infinite |
 | `/band`     | pub | uint8     | band in metres: 160, 80, 40, 30, 20, 17, 15, 12, 10, 6 |
 | `/pa-temp`  | pub | int16     | amplifier temperature, °C × 100 — same encoding as `/temp`, separate topic |
+| `/pa-src`   | pub | char[]    | device name of the peer whose `/hz` the amplifier follows (§6.2b); empty = none |
 | `/s-on`     | sub | uint8     | 0/1 — mains / standby of a whole device |
 | `/s-operate`| sub | uint8     | 0 = STANDBY, 1 = OPERATE |
 | `/s-full`   | sub | uint8     | 0 = half power, 1 = full power |
@@ -270,6 +272,9 @@ canonical set is summarised here with its direction:
 | `/rtty1` `/rtty2` | pub | uint8 + char[] | RTTY decoder 1 / 2 text: `[seq][ASCII 1–63 B]`, `TRX_NON`, only to subscribers (§7.1) |
 | `/rtty-tx`  | pub | uint8 + char[] | RTTY transmitted text, `[seq][ASCII 1–63 B]` at TX start; `[seq][0x00]` = TX aborted (§7.1) |
 | `/s-rtty`   | sub | uint8     | 1 = subscribe to / renew the three RTTY topics, 0 = unsubscribe (§7.1) |
+| `/jtty-rx`  | pub | struct    | JTTY decoded text: `[seq][msgId][flags][audioHz u16 LE][snr i8][ASCII 0–58 B]`, `TRX_NON`, only to subscribers (§7.2) |
+| `/jtty-tx`  | pub | uint8 + char[] | JTTY transmitted text, `[seq][ASCII 1–63 B]` per committed segment; `[seq][0x00]` = TX aborted (§7.2) |
+| `/s-jtty`   | sub | uint8     | 1 = subscribe to / renew the two JTTY topics, 0 = unsubscribe (§7.2) |
 
 `/pa-temp` is deliberately not `/temp`. The encoding is identical — one shape
 for a temperature whatever measures it — but `/temp` is the WX node's outdoor
@@ -289,9 +294,15 @@ SPE protocol document directly:
 | 1 | OPERATE | | 8 | ON — the device is powered and running |
 | 2 | TX | | 9 | LINK — telemetry is arriving |
 | 3 | ALARM | | 10 | REV2 — protocol revision of the amplifier |
-| 4 | FULL | | 11–15 | reserved, zero |
-| 5 | CONTEST | | | |
+| 4 | FULL | | 11 | PINNED — the `/hz` source is fixed by configuration (§6.2b) |
+| 5 | CONTEST | | 12–15 | reserved, zero |
 | 6 | BEEP | | | |
+
+`/pa-src` is the other half of §6.2b: the amplifier chooses whose `/hz` it
+acts on, and says so, because a panel showing the amplifier beside a radio
+cannot tell which radio otherwise. It names the peer whose `/hz` was last
+accepted, or before that the configured source; with bit 11 clear it is only
+whoever moved last and can change with the next `/hz`.
 
 A new topic MUST follow §6.1 direction naming and MUST document its encoding
 here before use across devices.
@@ -332,6 +343,31 @@ from a full peer table stays subscribed and receives nothing.
 A reference listener is `tools/rtty-stream-listen.py` (`RTY.fe`) in the wifilt
 repository; `tools/rtty-stream-record.py` (`RTY.01`) records `/rtty1` and
 `/rtty2` to two files per day for analysis.
+
+### 7.2 JTTY stream — `/jtty-rx` `/jtty-tx` (`705`, since FW 20261029)
+
+The same arrangement as §7.1 for the JTTY mode (WSJT-X 3.2's asynchronous
+4-GFSK keyboard mode): off by default (DATA → JTTY → SETTINGS → ADVANCED →
+*TrxNet text stream*), `/s-jtty` = `1` subscribes or renews every 30 s, the
+lease lapses after 90 s, at most 4 listeners, one per IP, `TRX_NON`.
+
+- JTTY arrives in whole frames, not characters, so `/jtty-rx` carries records:
+  `[seq u8][msgId u8][flags u8][audioHz u16 LE][snr i8][ASCII 0..58 B]`.
+  `flags` bit 0 = end of message. `msgId` numbers the messages being received
+  (it wraps); a listener appends each packet's text to its `msgId` and closes
+  it on the EOM flag. One packet is what a message gained since the last one --
+  usually one 1.888 s frame's worth; a longer gain is split, EOM on its last
+  piece. An EOM packet may carry no text at all.
+- `audioHz` is the lowest tone's audio frequency, as WSJT-X shows it; `snr` is
+  the message's SNR in 2500 Hz, dB.
+- `/jtty-tx` is `[seq][ASCII]` per segment committed to the air -- a whole
+  message, or each piece of a live-entry transmission as it is typed (filler
+  is not sent). `[seq][0x00]` alone = the transmission was aborted.
+- `seq` counts per topic and wraps; a skipped number is a lost packet or one
+  the interface dropped because its queue was full.
+
+A listener takes type `JTY` (§2). The reference listener is
+`tools/jtty-stream-listen.py` (`JTY.fe`) in the wifilt repository.
 
 ### 7.3 PTT lease — `/s-ptt` `/ptt` (`OI3`, since FW 20261031)
 
@@ -596,12 +632,12 @@ so priority prefixes matter most there). All others are ESP32 (`= 24`).
 | **705** | ESP32 | pub + sub + commander | `/hz` | `/hz`, `/mode`, `/s-hz` | on | on | `OI3 ANT` | `TRX2/3_NET_ID` → OI3 `/s-cw`,`/s-hz` |
 | **OI3** | ATmega2560 | pub + sub | `/hz`, `/mode` | `/s-hz`, `/s-mode`, `/s-cw` | on | on | `705 ANT ROT` | — |
 | **ROT** | ESP32 | pub + optional sub | `/azimuth`, `/elevation` | `/s-azimuth`, `/s-elevation` | on | **off** (legacy `TrxNetSubEnabled`) | `INK 705` | — |
-| **DIN** | ESP32 | sub + echo | `/gpio` (echo) | `/s-gpio` | on (echo) | on | `ANT` | — |
+| **DIN** | ESP32 | sub + echo | `/gpio` (outputs + applied input) | `/s-gpio`, or one picked peer topic (SETUP-4) | on (echo) | on | `ANT` (+ source type auto-added) | — |
 | **WX**  | ESP32 | publisher-only | 7 WX topics | — | on | *(hidden)* | `INK` | — |
 | **INK** | ESP32 | subscriber-only | — | up to 8 arbitrary `/x` paths (dynamic) | *(hidden)* | on | type of mirrored source (`WX`/`ROT`/…) | — |
-| **ANT** | ESP32 | sub + commander | — | `/hz`, `/gpio` | *(hidden)* | on | `OI3 705` | `trxnetDinName` → DIN `/s-gpio` |
+| **ANT** | ESP32 | sub + commander | — | `/hz`, `/gpio` | *(hidden)* | on | `OI3 705` | `trxnetDinName` (picked on /setup) → DIN `/s-gpio` |
 | **LTX** | Linux/Windows C++ | sub + commander | — | `/hz`, `/mode`, `/ptt` — from the configured peer only (§6.2b) | *(hidden)* | on | — | `trxnet.peer` (picked by scan in its wizard) → `/s-hz`,`/s-mode`,`/s-cw`,`/s-ptt` |
-| **PA** | Linux/Python | pub + sub | `/pa-flags`, `/fwd`, `/ref`, `/swr`, `/band`, `/pa-temp` | `/hz`, `/s-on`, `/s-operate`, `/s-full`, `/s-tune` | on | **off** | `705 OI3` | — |
+| **PA** | Linux/Python | pub + sub | `/pa-flags`, `/fwd`, `/ref`, `/swr`, `/band`, `/pa-temp`, `/pa-src` | `/hz`, `/s-on`, `/s-operate`, `/s-full`, `/s-tune` | on | **off** | `705 OI3` | — |
 
 Notes:
 - **INK** is the generalised subscriber: it maps N configured topic paths to

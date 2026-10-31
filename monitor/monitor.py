@@ -112,7 +112,7 @@ CI_V_FLAGS = [
 PA_FLAGS = [
     (0, "TUNE"),  (1, "OPERATE"), (2, "TX"),   (3, "ALARM"),
     (4, "FULL"),  (5, "CONTEST"), (6, "BEEP"),
-    (8, "ON"),    (9, "LINK"),    (10, "REV2"),
+    (8, "ON"),    (9, "LINK"),    (10, "REV2"), (11, "PINNED"),
 ]
 
 # ── payload decoder ───────────────────────────────────────────────────────────
@@ -130,7 +130,7 @@ def decode_payload(topic: str, data: bytes) -> str:
             val = struct.unpack_from("<H", data)[0]
             flags = [name for bit, name in CI_V_FLAGS if val & (1 << bit)]
             return (" | ".join(flags)) if flags else "0x0000"
-        if topic in ("/cw", "/s-cw"):
+        if topic in ("/cw", "/s-cw", "/pa-src"):
             return f'"{data.decode("ascii", errors="replace")}"'
         if topic in ("/s-hz",):
             hz = struct.unpack_from("<I", data)[0]
