@@ -4,7 +4,7 @@
 
 // ---------- library version ----------
 // Bump on any API change. Apps may compile-check with #if TRXNET_VERSION >= ...
-#define TRXNET_VERSION 0x0107   // 1.07 — onAnyTopic() catch-all observer (additive, wire-compatible)
+#define TRXNET_VERSION 0x0108   // 1.08 — setDiscoveryPort() + probe(): a node may listen off the network port (wire-compatible)
 
 // ---------- tuneable limits ----------
 // All values can be overridden by defining them before including this header.
@@ -228,7 +228,25 @@ public:
     const TrxPeer* peer(int index) const;
 
     // Set UDP port — call before begin(). Allows runtime port configuration from EEPROM.
+    // Sets the discovery port too (see setDiscoveryPort()).
     void setPort(uint16_t port);
+
+    // Since 1.08. Port the discovery broadcasts (PROBE, periodic ANNOUNCE) go to,
+    // when it differs from the port this node listens on — call after setPort(),
+    // before begin(). For a second TrxNet node on a machine that already runs one
+    // on the network port (local-trx beside a native wifilt): it listens on its
+    // own port, announces that port, and still reaches everyone on the network
+    // port. Peers learn the announced port and send to it. A peer on 1.08+ also
+    // answers this node's PROBE and keeps it alive with a unicast ANNOUNCE; an
+    // older peer still hears and reaches this node, but this node never learns it.
+    void setDiscoveryPort(uint16_t port);
+
+    // Since 1.08. Broadcast a PROBE now, as begin() does — every peer answers
+    // with an ANNOUNCE, so a fresh peer list fills within a round trip instead of
+    // the next periodic announce. Peers treat it as this node having restarted
+    // (onPeerAdded fires again there), so this is for an operator-triggered scan,
+    // not for a loop.
+    void probe();
 
     // Register a callback fired once per newly discovered peer. See TrxPeerCallback
     // notes above. Passing NULL clears the callback. Only one slot — registering
@@ -300,17 +318,20 @@ private:
         bool      active;
     };
 
-    // Ring buffer for CON deduplication — tracks recently received (ip, msgId) pairs.
+    // Ring buffer for CON deduplication — tracks recently received (ip, port, msgId).
     // Prevents duplicate callback dispatch when a retransmitted CON arrives after
-    // the ACK was lost in transit.
+    // the ACK was lost in transit. The port is part of the key since 1.08: two
+    // nodes on one machine share the IP, and their msgId counters both start at 1.
     struct SeenMsg {
         IPAddress ip;
+        uint16_t  port;
         uint16_t  msgId;
     };
 
     UDP&      _udp;
     char      _name[TRXNET_MAX_DEVICE_NAME];
     uint16_t  _port;
+    uint16_t  _discPort;
     uint32_t  _lastAnnounce;
     uint16_t  _msgId;
 
@@ -327,7 +348,7 @@ private:
     uint8_t            _prioCount;
 
     bool      _isPriority(const char* name) const;
-    void      _sendDiscovery(uint8_t pktType, IPAddress dest);
+    void      _sendDiscovery(uint8_t pktType, IPAddress dest, uint16_t destPort);
     void      _handleIncoming();
     void      _processDiscovery(IPAddress src, const uint8_t* buf, size_t len);
     void      _processCoAP(IPAddress src, uint16_t srcPort,

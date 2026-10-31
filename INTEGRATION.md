@@ -62,6 +62,7 @@ name = "<TYPE>.<NET_ID as 2-digit lowercase hex>"     e.g.  705.01, OI3.ff, ROT.
 | `ANT` | AntHub-NET antenna matrix           |
 | `PA`  | EXPERT 1K-FA linear amplifier       |
 | `RTY` | RTTY text-stream listener / recorder (Python, wifilt `tools/`) |
+| `LTX` | local-trx — PC audio + remote rig control for wifilt (C++, wifilt `local-trx/`) |
 
 New types MUST NOT collide on their first 4 characters with an existing type
 (priority prefixes match on ≤4 chars — see §5).
@@ -253,7 +254,9 @@ canonical set is summarised here with its direction:
 | `/s-mode`   | sub | uint8     | commanded CI-V mode                   |
 | `/s-azimuth`/`/s-elevation` | sub | uint16 | commanded degrees          |
 | `/s-gpio`   | sub | uint8     | commanded 8-bit output map            |
-| `/s-cw`     | sub | char[]    | CW/text, `TRX_CON`; single `0x00` byte = "stop sending" |
+| `/s-cw`     | sub | char[]    | CW/text, `TRX_CON`; single `0xFF` byte = "stop sending" (what `705` sends and OI3 acts on; earlier drafts said `0x00`/`0x03`) |
+| `/s-ptt`    | sub | uint8     | 1 = key / renew the PTT lease, 0 = unkey now — `TRX_NON` only (§7.3) |
+| `/ptt`      | pub | uint8     | 0/1 — PTT state of the `/s-ptt` lease, to the commanding peer (§7.3) |
 | `/pa-flags` | pub | uint16    | amplifier state, bit map below |
 | `/fwd`      | pub | uint16    | forward power, W × 10 (instantaneous, not a peak) |
 | `/ref`      | pub | uint16    | reflected power, W × 10 (instantaneous) |
@@ -329,6 +332,33 @@ from a full peer table stays subscribed and receives nothing.
 A reference listener is `tools/rtty-stream-listen.py` (`RTY.fe`) in the wifilt
 repository; `tools/rtty-stream-record.py` (`RTY.01`) records `/rtty1` and
 `/rtty2` to two files per day for analysis.
+
+### 7.3 PTT lease — `/s-ptt` `/ptt` (`OI3`, since FW 20261031)
+
+Remote PTT for audio modes (JS8, WSPR, SSB) where the device holding the
+radio's PTT line is not the one producing the audio — `LTX` keying an `OI3`.
+A lost packet must never leave a transmitter keyed, so PTT is a lease, not a
+switch:
+
+- The commander sends `/s-ptt` = `1` with `publishTo`, and repeats it every
+  300 ms while it wants PTT (MUST be ≤ 500 ms). It sends `0` to release, and
+  SHOULD repeat the `0` twice within 200 ms — only while it is still released.
+- Always `TRX_NON`. A `TRX_CON` retransmit of a `1` arriving after the `0`
+  would key the radio again.
+- The target MUST unkey when no `1` has arrived for 1500 ms, and MUST keep
+  running `loop()` while keyed through `/s-ptt` — otherwise it never reads the
+  `0` or notices the lease lapse.
+- The first peer that keys holds the lease until it releases or the lease
+  lapses; `/s-ptt` from any other peer is ignored meanwhile.
+- The target MUST refuse — stay unkeyed — while its own PTT is already active
+  (CW from its keyer or paddle, `/s-cw`) or an interlock blocks transmitting.
+- The target answers on `/ptt` with `publishTo` to the commander, `TRX_NON`:
+  on every change of the lease output, and once per refused `1`. A commander
+  that sees no `/ptt` = `1` within a second of keying SHOULD report the target
+  as not supporting `/s-ptt` (older firmware) or refusing.
+
+The reference commander is `local-trx` (`LTX`, wifilt repository); the
+reference target is the OI3 keyer firmware.
 
 ---
 
@@ -523,6 +553,39 @@ and beaconing or logging them as local state misreports the network.
 
 ---
 
+## 10b. Library extensions (shipped in v1.08)
+
+Two **additive** members in **v1.08** (`TRXNET_VERSION >= 0x0108`); the packet
+layout and `DISC_VERSION` are unchanged:
+
+1. **`void TrxNet::setDiscoveryPort(uint16_t port)`** — the port discovery
+   broadcasts go to, when it differs from the port the node listens on
+   (`setPort()` sets both). For a second node on a machine that already holds
+   the network port: `local-trx` next to a native wifilt listens on 5684 and
+   discovers on 5683. Its ANNOUNCE carries 5684, so peers send to 5684.
+2. **`void TrxNet::probe()`** — broadcast a PROBE now, as `begin()` does, for an
+   operator-triggered scan. Peers treat it as a restart and re-greet.
+
+Three behaviour changes, all invisible on a single-port network:
+
+- A PROBE is answered at the port the prober announced, not at the
+  responder's own port (identical when everyone uses one port).
+- The periodic ANNOUNCE is also unicast to every active peer whose announced
+  port differs from the discovery port — such a peer cannot hear the
+  broadcast and would time this node out.
+- A message's sender (`from` in callbacks), the CON dedupe ring and ACK
+  matching key on IP **and** port, IP alone as the fallback. Two nodes on one
+  machine share the IP, and both msgId counters start at 1. Keyed on IP alone,
+  an OI3 named the wrong one as the `/s-ptt` holder and dropped a CON as a
+  "duplicate" of the other node's.
+
+Mixed versions: an off-port node still reaches and is reached by older peers,
+but only learns peers on 1.08+ (an older peer answers its PROBE at the wrong
+port). `sizeof(TrxNet)` grew (one `uint16_t`, plus one per `TRXNET_MAX_SEEN` entry); the ABI guard (§10.1 B) catches
+a stale object.
+
+---
+
 ## 11. Per-device profiles
 
 Platform note: **OI3 is the only AVR node** (ATmega2560, `TRXNET_MAX_PEERS = 8`,
@@ -537,6 +600,7 @@ so priority prefixes matter most there). All others are ESP32 (`= 24`).
 | **WX**  | ESP32 | publisher-only | 7 WX topics | — | on | *(hidden)* | `INK` | — |
 | **INK** | ESP32 | subscriber-only | — | up to 8 arbitrary `/x` paths (dynamic) | *(hidden)* | on | type of mirrored source (`WX`/`ROT`/…) | — |
 | **ANT** | ESP32 | sub + commander | — | `/hz`, `/gpio` | *(hidden)* | on | `OI3 705` | `trxnetDinName` → DIN `/s-gpio` |
+| **LTX** | Linux/Windows C++ | sub + commander | — | `/hz`, `/mode`, `/ptt` — from the configured peer only (§6.2b) | *(hidden)* | on | — | `trxnet.peer` (picked by scan in its wizard) → `/s-hz`,`/s-mode`,`/s-cw`,`/s-ptt` |
 | **PA** | Linux/Python | pub + sub | `/pa-flags`, `/fwd`, `/ref`, `/swr`, `/band`, `/pa-temp` | `/hz`, `/s-on`, `/s-operate`, `/s-full`, `/s-tune` | on | **off** | `705 OI3` | — |
 
 Notes:

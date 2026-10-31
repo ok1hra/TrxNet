@@ -30,7 +30,7 @@ namespace trxnet_detail {
 // Constructor
 // ========================================================================
 TrxNet::TrxNet(UDP& udp, uint16_t port)
-    : _udp(udp), _port(port), _lastAnnounce(0), _msgId(1), _seenIdx(0),
+    : _udp(udp), _port(port), _discPort(port), _lastAnnounce(0), _msgId(1), _seenIdx(0),
       _onPeerAdded(NULL), _onAnyTopic(NULL), _prio(NULL), _prioCount(0)
 {
     _name[0] = '\0';
@@ -60,8 +60,12 @@ void TrxNet::begin(const char* name, size_t callerAbi) {
     strncpy(_name, name, TRXNET_MAX_DEVICE_NAME - 1);
     _name[TRXNET_MAX_DEVICE_NAME - 1] = '\0';
     _udp.begin(_port);
-    _sendDiscovery(DISC_PROBE, IPAddress(255, 255, 255, 255));
+    _sendDiscovery(DISC_PROBE, IPAddress(255, 255, 255, 255), _discPort);
     _lastAnnounce = millis();
+}
+
+void TrxNet::probe() {
+    _sendDiscovery(DISC_PROBE, IPAddress(255, 255, 255, 255), _discPort);
 }
 
 void TrxNet::loop() {
@@ -69,7 +73,14 @@ void TrxNet::loop() {
     _checkTimeouts();
 
     if (millis() - _lastAnnounce >= TRXNET_ANNOUNCE_MS) {
-        _sendDiscovery(DISC_ANNOUNCE, IPAddress(255, 255, 255, 255));
+        _sendDiscovery(DISC_ANNOUNCE, IPAddress(255, 255, 255, 255), _discPort);
+        // A peer listening on another port than the discovery port never hears
+        // the broadcast above, and would time us out of its table -- tell it
+        // directly (since 1.08, see setDiscoveryPort()).
+        for (int i = 0; i < TRXNET_MAX_PEERS; i++) {
+            if (_peers[i].active && _peers[i].port != _discPort)
+                _sendDiscovery(DISC_ANNOUNCE, _peers[i].ip, _peers[i].port);
+        }
         _lastAnnounce = millis();
     }
 }
@@ -178,6 +189,11 @@ bool TrxNet::publishTo(const char* peerName, const char* path,
 
 void TrxNet::setPort(uint16_t port) {
     _port = port;
+    _discPort = port;
+}
+
+void TrxNet::setDiscoveryPort(uint16_t port) {
+    _discPort = port;
 }
 
 void TrxNet::onAnyTopic(TrxTopicCallback cb) {
@@ -263,7 +279,7 @@ const TrxPeer* TrxNet::peer(int index) const {
 //   [4..N]  device name (no null terminator)
 //   [N+1]   port high byte
 //   [N+2]   port low byte
-void TrxNet::_sendDiscovery(uint8_t pktType, IPAddress dest) {
+void TrxNet::_sendDiscovery(uint8_t pktType, IPAddress dest, uint16_t destPort) {
     uint8_t buf[4 + TRXNET_MAX_DEVICE_NAME + 2];
     uint8_t nameLen = (uint8_t)strlen(_name);
     size_t  pos = 0;
@@ -277,7 +293,7 @@ void TrxNet::_sendDiscovery(uint8_t pktType, IPAddress dest) {
     buf[pos++] = (_port >> 8) & 0xFF;
     buf[pos++] = _port & 0xFF;
 
-    _udp.beginPacket(dest, _port);
+    _udp.beginPacket(dest, destPort);
     _udp.write(buf, pos);
     _udp.endPacket();
 }
@@ -317,7 +333,10 @@ void TrxNet::_processDiscovery(IPAddress src, const uint8_t* buf, size_t len) {
     TrxPeer* peer = _findOrAddPeer(name, src, port);
 
     if (buf[2] == DISC_PROBE) {
-        _sendDiscovery(DISC_ANNOUNCE, src);
+        // To the port the prober announced, not ours: identical on a network
+        // where everyone uses one port, and the only reply a peer listening
+        // elsewhere (setDiscoveryPort()) can receive at all. Since 1.08.
+        _sendDiscovery(DISC_ANNOUNCE, src, port);
         // Brand-new peers were already greeted inside _findOrAddPeer(); here we
         // additionally re-greet a peer that rebooted while still in our table.
         if (wasKnown && peer && _onPeerAdded) _onPeerAdded(peer);
@@ -448,7 +467,8 @@ void TrxNet::_processCoAP(IPAddress src, uint16_t srcPort,
         for (int i = 0; i < TRXNET_MAX_PENDING; i++) {
             if (_pending[i].active &&
                 _pending[i].msgId == msgId &&
-                _pending[i].ip    == src)
+                _pending[i].ip    == src &&
+                _pending[i].port  == srcPort)
             {
                 _pending[i].active = false;
             }
@@ -469,11 +489,12 @@ void TrxNet::_processCoAP(IPAddress src, uint16_t srcPort,
     // Drop the duplicate to prevent the callback firing more than once.
     if (msgType == COAP_CON) {
         for (int i = 0; i < TRXNET_MAX_SEEN; i++) {
-            if (_seen[i].msgId == msgId && _seen[i].ip == src)
+            if (_seen[i].msgId == msgId && _seen[i].ip == src && _seen[i].port == srcPort)
                 return;
         }
         // Record as seen before dispatching
         _seen[_seenIdx].ip    = src;
+        _seen[_seenIdx].port  = srcPort;
         _seen[_seenIdx].msgId = msgId;
         _seenIdx = (_seenIdx + 1) % TRXNET_MAX_SEEN;
     }
@@ -536,14 +557,20 @@ void TrxNet::_processCoAP(IPAddress src, uint16_t srcPort,
     const uint8_t* payload    = &buf[pos];
     size_t         payloadLen = (pos <= len) ? (len - pos) : 0;
 
-    // Resolve sender name from peer list
+    // Resolve sender name from peer list — by IP and port first, since 1.08: two
+    // nodes on one machine (native wifilt + local-trx) share the IP and differ
+    // only in port. IP alone stays as the fallback for a sender whose source port
+    // is not the one it announced.
     char fromName[TRXNET_MAX_DEVICE_NAME];
     fromName[0] = '\0';
-    for (int i = 0; i < TRXNET_MAX_PEERS; i++) {
-        if (_peers[i].active && _peers[i].ip == src) {
-            strncpy(fromName, _peers[i].name, sizeof(fromName) - 1);
-            fromName[sizeof(fromName) - 1] = '\0';
-            break;
+    for (int pass = 0; pass < 2 && fromName[0] == '\0'; pass++) {
+        for (int i = 0; i < TRXNET_MAX_PEERS; i++) {
+            if (_peers[i].active && _peers[i].ip == src &&
+                (pass == 1 || _peers[i].port == srcPort)) {
+                strncpy(fromName, _peers[i].name, sizeof(fromName) - 1);
+                fromName[sizeof(fromName) - 1] = '\0';
+                break;
+            }
         }
     }
 

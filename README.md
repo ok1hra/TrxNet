@@ -369,7 +369,8 @@ if (NET_ID != 0x00) {
 | Type prefix | Example name | Description |
 |-------------|-------------|-------------|
 | `705` | `705.01` | IC-705 Interface — publishes `/freq`, `/mode`, `/flags`; subscribes `/s-hz`, `/s-mode`. On request publishes RTTY text `/rtty1`, `/rtty2`, `/rtty-tx` to peers that subscribe with `/s-rtty` ([INTEGRATION.md §7.1](INTEGRATION.md)) |
-| `OI3` | `OI3.ff` | k3ng CW keyer — publishes `/cw`; subscribes `/s-cw` |
+| `OI3` | `OI3.ff` | k3ng CW keyer — publishes `/hz`, `/mode`, `/ptt`; subscribes `/s-hz`, `/s-mode`, `/s-cw`, `/s-ptt` (PTT lease, [INTEGRATION.md §7.3](INTEGRATION.md)) |
+| `LTX` | `LTX.01` | local-trx (wifilt) — PC sound card for audio, rig control through a picked peer: subscribes `/hz`, `/mode`, `/ptt` from it, sends it `/s-hz`, `/s-mode`, `/s-cw`, `/s-ptt`. Listens on 5684 beside a native wifilt (`setDiscoveryPort()`, v1.08) |
 | `ROT` | `ROT.01` | IP-rotator — publishes `/azimuth`, `/elevation`; subscribes `/s-azimuth`, `/s-elevation` |
 | `DIN` | `DIN.01` | ETH DIN rail dev kit — subscribes `/s-gpio` (set 8 outputs); publishes `/gpio` (current output state) |
 | `WX` | `WX.01` | ESP32-POE weather station — publishes `/temp`, `/hum`, `/press`, `/rain`, `/winddir`, `/windavg`, `/windmax` (publish-only) |
