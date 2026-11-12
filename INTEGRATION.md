@@ -258,6 +258,7 @@ canonical set is summarised here with its direction:
 | `/s-cw`     | sub | char[]    | CW/text, `TRX_CON`; single byte `0xFF` (what `705` sends) or `0x03` = "stop sending" — OI3 acts on both; an earlier draft said `0x00` |
 | `/s-ptt`    | sub | uint8     | 1 = key / renew the PTT lease, 0 = unkey now — `TRX_NON` only (§7.3) |
 | `/ptt`      | pub | uint8     | 0/1 — PTT state of the `/s-ptt` lease, to the commanding peer (§7.3) |
+| `/wl-host`  | pub | uint8[11+n] | state of the machine running native wifilt, to the OI3 (§7.4) |
 | `/pa-flags` | pub | uint16    | amplifier state, bit map below |
 | `/fwd`      | pub | uint16    | forward power, W × 10 (instantaneous, not a peak) |
 | `/ref`      | pub | uint16    | reflected power, W × 10 (instantaneous) |
@@ -395,6 +396,38 @@ switch:
 
 The reference commander is `local-trx` (`LTX`, wifilt repository); the
 reference target is the OI3 keyer firmware.
+
+### 7.4 Host state — `/wl-host` (`705` native → `OI3`, since FW 20261112)
+
+A Raspberry Pi running the native wifilt build together with `local-trx`, with
+an OI3 as local-trx's CAT/CW/PTT, usually has no screen. wifilt tells the OI3
+how the Pi is doing, and the OI3 shows it in its LCD menu item "RPI".
+
+- Sent only by the native build, only on a Raspberry Pi, and only once a
+  `LTX.*` peer on the sender's own address has been seen since start (sticky:
+  when local-trx stops later the state keeps coming, with `LTX` clear).
+- To every `OI3.*` peer on **another** address with `publishTo` — local-trx's
+  FSK stand-in carries an `OI3.*` name on the Pi's own address.
+- `TRX_NON`: every 5 s, at once on a change (at most once a second), and twice
+  50 ms apart on the way down. The receiver ages it out on its own (OI3: RUN
+  quiet for 15 s = offline), since TrxNet has no "peer left" event.
+
+Payload, 11 + n bytes:
+
+| Offset | Size | Field |
+|--------|------|-------|
+| 0 | 1 | version = 1 (a receiver accepts ≥ 1 and ignores bytes it does not know) |
+| 1 | 1 | state: 0 RUN, 1 RESTART (wifilt re-executes itself), 2 STOP (service stopped), 3 REBOOT (the system shuts down or reboots), 4 UPDATE (web update under way) |
+| 2 | 1 | flags: bit 0 LOCKED (root is the fslock overlay), 1 LOCKABLE (fslock installed), 2 AP (the WiFi interface runs a hotspot), 3 WIFI (a WiFi interface is up with an address), 4 LTX (local-trx present), 5 TRXLINK (wifilt's radio slot to local-trx is linked), 6 IP_ETH (the address is not the WiFi interface's) |
+| 3 | 1 | int8 dBm of the WiFi client link, 0 = none |
+| 4 | 1 | update progress 0–100, 255 = none |
+| 5 | 1 | reserved, 0 |
+| 6 | 4 | IPv4 address to browse to, in order a.b.c.d (0.0.0.0 = none) |
+| 10 | 1 | n = SSID length, 0–32 |
+| 11 | n | SSID (the associated network, or the hotspot's own name), no terminator |
+
+The sender is wifilt `host_status.h`; the receiver is the OI3 firmware
+`rpi_status.ino`.
 
 ---
 
@@ -652,8 +685,8 @@ so priority prefixes matter most there). All others are ESP32 (`= 24`).
 
 | Device | Platform | Role | Publishes | Subscribes | `publish_enable` default | `subscribe_enable` default | Priority default | Target bindings |
 |--------|----------|------|-----------|------------|--------------------------|----------------------------|------------------|-----------------|
-| **705** | ESP32 | pub + sub + commander | `/hz` | `/hz`, `/mode`, `/s-hz` | on | on | `OI3 ANT` | `TRX2/3_NET_ID` → OI3 `/s-cw`,`/s-hz` |
-| **OI3** | ATmega2560 | pub + sub | `/hz`, `/mode`, `/lptune`, `/ptt` | `/s-hz`, `/s-mode`, `/s-cw`, `/s-lptune`, `/s-ptt` | on | on | `705 ANT ROT` | — |
+| **705** | ESP32 | pub + sub + commander | `/hz`; `/wl-host` (native build on a Pi, §7.4) | `/hz`, `/mode`, `/s-hz` | on | on | `OI3 ANT` | `TRX2/3_NET_ID` → OI3 `/s-cw`,`/s-hz` |
+| **OI3** | ATmega2560 | pub + sub | `/hz`, `/mode`, `/lptune`, `/ptt` | `/s-hz`, `/s-mode`, `/s-cw`, `/s-lptune`, `/s-ptt`, `/wl-host` | on | on | `705 ANT ROT` | — |
 | **ROT** | ESP32 | pub + optional sub | `/azimuth`, `/elevation` | `/s-azimuth`, `/s-elevation` | on | **off** (legacy `TrxNetSubEnabled`) | `INK 705` | — |
 | **DIN** | ESP32 | sub + echo | `/gpio` (outputs + applied input) | `/s-gpio`, or one picked peer topic (SETUP-4) | on (echo) | on | `ANT` (+ source type auto-added) | — |
 | **WX**  | ESP32 | publisher-only | 7 WX topics | — | on | *(hidden)* | `INK` | — |
